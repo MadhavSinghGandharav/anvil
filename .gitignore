@@ -31,3 +31,4 @@ target
 # already existing elements were commented out
 
 #/target
+/src/main.rs
