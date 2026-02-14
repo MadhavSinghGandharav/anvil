@@ -31,6 +31,7 @@ pub struct SGDRegressor {
 
     /// Learning rate used during optimization.
     learning_rate: f64,
+
 }
 
 /// Builder for [`SGDRegressor`].

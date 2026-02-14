@@ -60,6 +60,16 @@ impl DenseMatrix {
         &self.data[start..start + self.n_cols]
     }
 
+    #[inline]
+    pub fn n_rows(&self) -> usize{
+        self.n_rows
+    }
+
+    #[inline]
+    pub fn n_cols(&self) -> usize{
+        self.n_cols
+    }
+
     /// Creates a matrix with reserved capacity but **no initialized elements**.
     ///
     /// ⚠️ This constructor is `pub(crate)` and intended for internal use
@@ -134,4 +144,24 @@ impl DenseMatrix {
 pub struct DenseVector {
     /// Contiguous data buffer.
     data: Vec<f64>,
+}
+
+impl DenseVector {
+    #[inline]
+    pub fn get(&self, idx: usize) -> f64{
+        self.data[idx]
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize{
+        self.data.len()
+    }
+
+    pub fn from_vec(arr: Vec<f64>) -> Self{
+        Self{
+            data: arr
+        }
+    }
+
+
 }
