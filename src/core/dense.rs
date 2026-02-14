@@ -1,3 +1,5 @@
+use core::f64;
+
 /// A dense 2-dimensional matrix stored in **row-major** order.
 ///
 /// Internally, elements are stored in a contiguous `Vec<f64>` buffer.
@@ -129,6 +131,25 @@ impl DenseMatrix {
             n_cols: cols,
         }
     }
+
+    pub fn vec_mul(&self, vector: &[f64]) -> Vec<f64> {
+        assert_eq!(self.n_cols, vector.len());
+
+        let mut result = vec![0.0; self.n_rows];
+
+        for row in 0..self.n_rows {
+            let row_slice = self.row(row);
+            let mut sum = 0.0;
+
+            for col in 0..self.n_cols {
+                sum += row_slice[col] * vector[col];
+            }
+
+            result[row] = sum;
+        }
+
+        result
+    }
 }
 
 /// A dense 1-dimensional vector backed by a contiguous `Vec<f64>`.
@@ -163,5 +184,13 @@ impl DenseVector {
         }
     }
 
+    pub fn dot(&self, vector: &[f64]) -> f64{
+        assert_eq!(self.len(),vector.len());
 
+        let mut result: f64 = 0.0;
+        for i in 0..self.len(){
+            result += self.data[i] * vector[i];
+        }
+        result
+    }
 }

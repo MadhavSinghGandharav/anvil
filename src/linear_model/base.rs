@@ -22,6 +22,4 @@ fn pre_process(features: &DenseMatrix, target: &DenseVector) {
         *val /= n_samples as f64;
     }
 
-
-
 }
