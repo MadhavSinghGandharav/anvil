@@ -1,3 +1,6 @@
-mod dense;
-pub use dense::{DenseMatrix,DenseVector};
+mod dense_matrix;
+mod dense_vector;
+pub mod utils;
+pub use dense_matrix::DenseMatrix;
+pub use dense_vector::DenseVector;
 
