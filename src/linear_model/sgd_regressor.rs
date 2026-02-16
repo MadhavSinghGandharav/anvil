@@ -1,71 +1,102 @@
+use crate::{
+    core::{DenseMatrix, DenseVector, utils::dot},
+    optim::{Optimizer, SGD},
+};
+use rand::seq::SliceRandom;
+
 /// Stochastic Gradient Descent regressor.
 ///
 /// `SGDRegressor` implements linear regression using
-/// stochastic gradient descent optimization.
+/// mini-batch stochastic gradient descent.
 ///
-/// The model learns weights and bias during [`fit`].
-/// Hyperparameters such as learning rate and number of epochs
-/// can be configured using the builder pattern.
+/// The optimizer is generic and supplied at build time.
+/// Model parameters (`weights` and `bias`) are initialized
+/// during [`fit`].
+///
+/// # Model
+///
+/// The prediction function is:
+///
+/// `ŷ = w^T x + b`
+///
+/// where:
+/// - `w` is the weight vector
+/// - `b` is the bias (intercept)
+///
+/// # Training
+///
+/// During training:
+/// - Data is shuffled every epoch.
+/// - Gradients are accumulated per mini-batch.
+/// - The optimizer updates both weights and bias.
 ///
 /// # Example
 ///
 /// ```ignore
 /// let model = SGDRegressor::builder()
-///     .learning_rate(0.01)
 ///     .epochs(200)
 ///     .build();
 /// ```
-pub struct SGDRegressor {
+pub struct SGDRegressor<T: Optimizer> {
     /// Learned feature weights.
     ///
-    /// Initialized during `fit`.
+    /// Initialized inside [`fit`].
     weights: Vec<f64>,
 
     /// Learned bias (intercept).
     ///
-    /// Initialized during `fit`.
-    bias: f64,
+    /// Stored as a length-1 array so it can be updated
+    /// using the same optimizer interface as weights.
+    bias: [f64; 1],
 
     /// Number of training epochs.
     epochs: usize,
 
-    /// Learning rate used during optimization.
-    learning_rate: f64,
+    /// Mini-batch size.
+    batch_size: usize,
 
+    /// Optimizer used for parameter updates.
+    optimizer: T,
 }
 
 /// Builder for [`SGDRegressor`].
 ///
-/// Provides a configurable way to construct an
-/// `SGDRegressor` with custom hyperparameters.
+/// Allows configuration of:
+/// - number of epochs
+/// - batch size
+/// - optimizer
 ///
-/// Defaults:
+/// # Defaults
+///
 /// - `epochs = 100`
-/// - `learning_rate = 0.1`
-pub struct Builder {
+/// - `batch_size = 1` (pure SGD)
+/// - `optimizer = SGD::new(0.01)`
+pub struct Builder<T: Optimizer> {
     epochs: usize,
-    learning_rate: f64,
+    batch_size: usize,
+    optimizer: T,
 }
 
-impl Default for Builder {
+impl Default for Builder<SGD> {
     /// Creates a builder with default hyperparameters.
     fn default() -> Self {
         Self {
             epochs: 100,
-            learning_rate: 0.1,
+            batch_size: 1,
+            optimizer: SGD::new(0.01),
         }
     }
 }
 
-impl SGDRegressor {
-    /// Creates an `SGDRegressor` with default hyperparameters.
+impl<T: Optimizer> SGDRegressor<T> {
+    /// Creates an `SGDRegressor` using default settings.
     ///
     /// Equivalent to:
     ///
     /// ```ignore
     /// SGDRegressor::builder().build()
     /// ```
-    pub fn new() -> Self {
+    pub fn new() -> SGDRegressor<SGD> {
         Self::builder().build()
     }
 
@@ -75,43 +106,122 @@ impl SGDRegressor {
     ///
     /// ```ignore
     /// let model = SGDRegressor::builder()
-    ///     .learning_rate(0.01)
     ///     .epochs(500)
+    ///     .batch_size(32)
     ///     .build();
     /// ```
-    pub fn builder() -> Builder {
+    pub fn builder() -> Builder<SGD> {
         Builder::default()
     }
-}
 
-impl Builder {
-    /// Sets the learning rate.
+    /// Fits the model using mini-batch SGD.
     ///
     /// # Panics
     ///
-    /// You should later validate that learning rate is positive
-    /// inside `build()` in production code.
-    pub fn learning_rate(mut self, lr: f64) -> Self {
-        self.learning_rate = lr;
-        self
-    }
+    /// Panics if:
+    /// - `features.n_rows() != target.len()`
+    ///
+    /// # Algorithm
+    ///
+    /// For each epoch:
+    /// 1. Shuffle sample indices.
+    /// 2. Iterate over mini-batches.
+    /// 3. Accumulate gradients.
+    /// 4. Average gradients.
+    /// 5. Update weights and bias using the optimizer.
+    pub fn fit(&mut self, features: &DenseMatrix, target: &DenseVector) {
+        let n_samples = features.n_rows();
+        let n_features = features.n_cols();
 
+        assert_eq!(n_samples, target.len());
+
+        // Initialize parameters
+        self.weights = vec![0.0; n_features];
+
+        let mut rng = rand::rng();
+        let mut indices: Vec<usize> = (0..n_samples).collect();
+
+        let mut gradient = vec![0.0; n_features];
+        let mut bias_gradient = [0.0];
+
+        for _ in 0..self.epochs {
+            // Shuffle data each epoch
+            indices.shuffle(&mut rng);
+
+            for batch in indices.chunks(self.batch_size) {
+                gradient.fill(0.0);
+                bias_gradient[0] = 0.0;
+
+                for &idx in batch {
+                    let row = features.row(idx);
+
+                    // Prediction
+                    let y_pred = dot(row, &self.weights);
+
+                    // Error
+                    let error = target[idx] - y_pred;
+
+                    // Weight gradient accumulation
+                    for j in 0..n_features {
+                        gradient[j] += -2.0 * error * row[j];
+                    }
+
+                    // Bias gradient accumulation
+                    bias_gradient[0] += -2.0 * error;
+                }
+
+                // Average gradients
+                let inv_bs = 1.0 / batch.len() as f64;
+
+                for g in &mut gradient {
+                    *g *= inv_bs;
+                }
+
+                bias_gradient[0] *= inv_bs;
+
+                // Update parameters
+                self.optimizer.step(&mut self.weights, &gradient);
+                self.optimizer.step(&mut self.bias, &bias_gradient);
+            }
+        }
+    }
+}
+
+impl<T: Optimizer> Builder<T> {
     /// Sets the number of training epochs.
     pub fn epochs(mut self, epochs: usize) -> Self {
         self.epochs = epochs;
         self
     }
 
+    /// Sets the mini-batch size.
+    ///
+    /// `batch_size = 1` corresponds to pure SGD.
+    pub fn batch_size(mut self, batch_size: usize) -> Self {
+        self.batch_size = batch_size;
+        self
+    }
+
+    /// Sets a custom optimizer.
+    ///
+    /// Allows replacing the default `SGD` optimizer with
+    /// another implementation of [`Optimizer`].
+    pub fn optimizer(mut self, optimizer: T) -> Self {
+        self.optimizer = optimizer;
+        self
+    }
+
     /// Builds the `SGDRegressor`.
     ///
-    /// The model is returned in an untrained state.
-    /// Weights and bias are initialized during `fit`.
-    pub fn build(self) -> SGDRegressor {
+    /// The returned model is **untrained**.
+    /// Parameters are initialized during [`fit`].
+    pub fn build(self) -> SGDRegressor<T> {
         SGDRegressor {
             weights: Vec::new(),
-            bias: 0.0,
+            bias: [0.0],
             epochs: self.epochs,
-            learning_rate: self.learning_rate,
+            batch_size: self.batch_size,
+            optimizer: self.optimizer,
         }
     }
 }
