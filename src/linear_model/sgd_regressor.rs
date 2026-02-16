@@ -1,3 +1,4 @@
+
 use crate::{
     core::{DenseMatrix, DenseVector, utils::dot},
     optim::{Optimizer, SGD},
@@ -88,7 +89,7 @@ impl Default for Builder<SGD> {
     }
 }
 
-impl<T: Optimizer> SGDRegressor<T> {
+impl SGDRegressor<SGD> {
     /// Creates an `SGDRegressor` using default settings.
     ///
     /// Equivalent to:
@@ -96,11 +97,11 @@ impl<T: Optimizer> SGDRegressor<T> {
     /// ```ignore
     /// SGDRegressor::builder().build()
     /// ```
-    pub fn new() -> SGDRegressor<SGD> {
+
+    pub fn new() -> Self {
         Self::builder().build()
     }
-
-    /// Returns a builder for configuring an `SGDRegressor`.
+ /// Returns a builder for configuring an `SGDRegressor`.
     ///
     /// # Example
     ///
@@ -110,8 +111,20 @@ impl<T: Optimizer> SGDRegressor<T> {
     ///     .batch_size(32)
     ///     .build();
     /// ```
+
     pub fn builder() -> Builder<SGD> {
         Builder::default()
+    }
+}
+
+impl<T: Optimizer> SGDRegressor<T> {
+
+    pub fn weights(&self) -> &[f64] {
+        &self.weights
+    }
+
+    pub fn bias(&self) -> f64 {
+        self.bias[0]
     }
 
     /// Fits the model using mini-batch SGD.
@@ -156,18 +169,18 @@ impl<T: Optimizer> SGDRegressor<T> {
                     let row = features.row(idx);
 
                     // Prediction
-                    let y_pred = dot(row, &self.weights);
+                    let y_pred = dot(row, &self.weights) + self.bias[0];
 
                     // Error
                     let error = target[idx] - y_pred;
 
                     // Weight gradient accumulation
                     for j in 0..n_features {
-                        gradient[j] += -2.0 * error * row[j];
+                        gradient[j] +=  -error * row[j];
                     }
 
                     // Bias gradient accumulation
-                    bias_gradient[0] += -2.0 * error;
+                    bias_gradient[0] += -error;
                 }
 
                 // Average gradients
@@ -206,7 +219,7 @@ impl<T: Optimizer> Builder<T> {
     ///
     /// Allows replacing the default `SGD` optimizer with
     /// another implementation of [`Optimizer`].
-    pub fn optimizer(mut self, optimizer: T) -> Self {
+    pub fn optimizer(mut self, optimizer: T) -> Builder<T> {
         self.optimizer = optimizer;
         self
     }
