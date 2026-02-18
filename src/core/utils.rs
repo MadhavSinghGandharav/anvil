@@ -1,5 +1,5 @@
 
-use crate::core::{DenseMatrix, DenseVector};
+use crate::core::DenseMatrix;
 
 /// Performs matrix–vector multiplication.
 ///
@@ -11,7 +11,7 @@ use crate::core::{DenseMatrix, DenseVector};
 /// - `matrix` has shape `(n_samples, n_features)`
 /// - `vector` has length `n_features`
 ///
-/// The returned `DenseVector` has length `n_samples`.
+/// The returned `Vector` has length `n_samples`.
 ///
 /// # Panics
 ///
@@ -27,13 +27,13 @@ use crate::core::{DenseMatrix, DenseVector};
 /// - Uses row-wise access, which is cache-friendly
 ///   due to row-major memory layout.
 /// - Allocates a new `DenseVector` for the result.
-pub fn mat_vec_mul(matrix: &DenseMatrix, vector: &[f64]) -> DenseVector {
+pub fn mat_vec_mul(matrix: &DenseMatrix, vector: &[f64]) -> Vec<f64> {
     let n_features = matrix.n_cols();
     let n_samples = matrix.n_rows();
 
     assert_eq!(n_features, vector.len());
 
-    let mut result = DenseVector::zeros(n_samples);
+    let mut result: Vec<f64> = vec![0.0f64;n_samples];
 
     for row in 0..n_samples {
         let row_slice = matrix.row(row);

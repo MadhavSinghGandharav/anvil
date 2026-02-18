@@ -1,6 +1,6 @@
 
 use crate::{
-    core::{DenseMatrix, DenseVector, utils::dot},
+    core::{DenseMatrix, utils::dot},
     optim::{Optimizer, SGD},
 };
 use rand::seq::SliceRandom;
@@ -142,7 +142,7 @@ impl<T: Optimizer> SGDRegressor<T> {
     /// 3. Accumulate gradients.
     /// 4. Average gradients.
     /// 5. Update weights and bias using the optimizer.
-    pub fn fit(&mut self, features: &DenseMatrix, target: &DenseVector) {
+    pub fn fit(&mut self, features: &DenseMatrix, target: &[f64]) {
         let n_samples = features.n_rows();
         let n_features = features.n_cols();
 

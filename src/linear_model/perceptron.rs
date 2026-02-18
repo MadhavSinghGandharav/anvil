@@ -1,6 +1,8 @@
+use core::f64;
+
 use crate::{
-    core::{DenseMatrix, DenseVector, utils::dot},
-    optim::{Optimizer, SGD},
+    core::{DenseMatrix, utils::dot},
+    optim::{Optimizer, SGD}, preprocessing::LabelEncoder,
 };
 use rand::seq::SliceRandom;
 
@@ -65,7 +67,7 @@ pub struct Perceptron<T: Optimizer> {
     /// Optimizer used for parameter updates.
     optimizer: T,
 
-    target_map: [f64;2]
+    classes: [usize;2]
 }
 
 /// Builder for configuring a [`Perceptron`] classifier.
@@ -91,7 +93,7 @@ impl Default for Builder<SGD> {
         Self {
             epochs: 100,
             batch_size: 1,
-            optimizer: SGD::new(0.01),
+            optimizer: SGD::new(1.0),
         }
     }
 }
@@ -134,15 +136,19 @@ impl<T: Optimizer> Perceptron<T> {
     pub fn bias(&self) -> f64 {
         self.bias[0]
     }
+    pub fn classes(&self) -> &[usize;2]{
+        &self.classes
+    }
 
     /// Predicts the class label for a single sample.
     ///
     /// Returns:
     /// - `1.0` if `w^T x + b >= 0`
     /// - `-1.0` otherwise
-    pub fn predict(&self, x: &[f64]) -> f64 {
+    pub fn predict(&self, x: &[f64]) -> usize {
         let fx = dot(x, &self.weights) + self.bias[0];
-        if fx >= 0.0 { self.target_map[1] } else { self.target_map[0] }
+        if fx >= 0.0 { self.classes[1] } else { self.classes[0] }
+        
     }
 
     /// Trains the perceptron classifier using mini-batch stochastic
@@ -172,45 +178,24 @@ impl<T: Optimizer> Perceptron<T> {
     /// Target labels must be encoded as:
     ///
     /// `-1.0` or `1.0`
+    fn update_target(&mut self, target: &[usize]) -> Vec<f64> {
+        let mut encoder = LabelEncoder::new();
+        let encoded = encoder.fit_transform(target);
 
-    fn update_target(&mut self,target: &DenseVector) -> Vec<f64>{
-        let mut classes = [0.0; 2];
-        let mut n_classes = 0;
-        let mut result = Vec::with_capacity(target.len());
+        assert_eq!(encoder.classes().len(), 2);
 
-        for &y in target.as_slice().iter() {
-            let mut found = false;
-            
-            for i in 0..n_classes {
-                if y == classes[i] {
-                    found = true;
-                    if i == 0 {
-                        result.push(-1.0);
-                    }else{
-                        result.push(1.0);
-                    }
-                    break;
-                }
-            }
+        self.classes = [
+            encoder.classes()[0],
+            encoder.classes()[1],
+        ];
 
-            if !found {
-                if n_classes == 2 {
-                    panic!("Only 2 classes supported");
-                }
-                classes[n_classes] = y;
-                if n_classes == 0{
-                    result.push(-1.0);
-                }else{
-                    result.push(1.0);
-                }
-                n_classes += 1;
-            }
-        }
-        self.target_map = classes;
-        result
-    }
+            encoded
+                .into_iter()
+                .map(|i| if i == 0 { -1.0 } else { 1.0 })
+                .collect()
+    }    
 
-    pub fn fit(&mut self, features: &DenseMatrix, target: &DenseVector) {
+    pub fn fit(&mut self, features: &DenseMatrix, target: &[usize]) {
         let n_samples = features.n_rows();
         let n_features = features.n_cols();
 
@@ -219,7 +204,8 @@ impl<T: Optimizer> Perceptron<T> {
 
         // Initialize parameters
         self.weights = vec![0.0; n_features];
-        let target = self.update_target(&target);
+        let target = self.update_target(&target); 
+    
         let mut rng = rand::rng();
         let mut indices: Vec<usize> = (0..n_samples).collect();
 
@@ -291,7 +277,7 @@ impl<T: Optimizer> Builder<T> {
             epochs: self.epochs,
             batch_size: self.batch_size,
             optimizer: self.optimizer,
-            target_map: [0.0f64;2]
+            classes: [0;2]
             
         }
     }
