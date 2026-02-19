@@ -46,12 +46,12 @@ use rand::seq::SliceRandom;
 ///     .batch_size(32)
 ///     .build();
 /// ```
-pub struct LogisticRegression<T: Optimizer> {
+pub struct LogisticRegression {
     weights: Vec<f64>,
     bias: [f64; 1],
     epochs: usize,
     batch_size: usize,
-    optimizer: T,
+    optimizer: Box<dyn Optimizer>,
     classes: [usize; 2],
 }
 
@@ -62,13 +62,13 @@ pub struct LogisticRegression<T: Optimizer> {
 /// - `epochs = 100`
 /// - `batch_size = 1`
 /// - `optimizer = SGD::new(1.0)`
-pub struct Builder<T: Optimizer> {
+pub struct Builder {
     epochs: usize,
     batch_size: usize,
-    optimizer: T,
+    optimizer: Box<dyn Optimizer>,
 }
 
-impl Default for Builder<SGD> {
+impl Default for Builder {
     fn default() -> Self {
         Self {
             epochs: 100,
@@ -89,17 +89,17 @@ impl Default for Builder<SGD> {
         }
     }
 
-impl LogisticRegression<SGD> {
+impl LogisticRegression {
     pub fn new() -> Self {
         Self::builder().build()
     }
 
-    pub fn builder() -> Builder<SGD> {
+    pub fn builder() -> Builder {
         Builder::default()
     }
 }
 
-impl<T: Optimizer> LogisticRegression<T> {
+impl LogisticRegression {
     pub fn weights(&self) -> &[f64] {
         &self.weights
     }
@@ -217,7 +217,7 @@ impl<T: Optimizer> LogisticRegression<T> {
     }
 }
 
-impl<T: Optimizer> Builder<T> {
+impl Builder {
     pub fn epochs(mut self, epochs: usize) -> Self {
         self.epochs = epochs;
         self
@@ -228,12 +228,12 @@ impl<T: Optimizer> Builder<T> {
         self
     }
 
-    pub fn optimizer(mut self, optimizer: T) -> Builder<T> {
-        self.optimizer = optimizer;
+    pub fn optimizer<O: Optimizer + 'static>(mut self, optimizer: O) -> Builder {
+        self.optimizer = Box::new(optimizer);
         self
     }
 
-    pub fn build(self) -> LogisticRegression<T> {
+    pub fn build(self) -> LogisticRegression {
         LogisticRegression {
             weights: Vec::new(),
             bias: [0.0],

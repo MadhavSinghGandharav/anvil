@@ -46,7 +46,7 @@ use rand::seq::SliceRandom;
 ///     .batch_size(1)
 ///     .build();
 /// ```
-pub struct Perceptron<T: Optimizer> {
+pub struct Perceptron {
     /// Learned feature weights.
     ///
     /// Initialized during [`fit`].
@@ -65,7 +65,7 @@ pub struct Perceptron<T: Optimizer> {
     batch_size: usize,
 
     /// Optimizer used for parameter updates.
-    optimizer: T,
+    optimizer: Box<dyn Optimizer>,
 
     classes: [usize;2]
 }
@@ -82,23 +82,23 @@ pub struct Perceptron<T: Optimizer> {
 /// - `epochs = 100`
 /// - `batch_size = 1` (pure online perceptron)
 /// - `optimizer = SGD::new(0.01)`
-pub struct Builder<T: Optimizer> {
+pub struct Builder {
     epochs: usize,
     batch_size: usize,
-    optimizer: T,
+    optimizer: Box<dyn Optimizer>,
 }
 
-impl Default for Builder<SGD> {
+impl Default for Builder {
     fn default() -> Self {
         Self {
             epochs: 100,
             batch_size: 1,
-            optimizer: SGD::new(1.0),
+            optimizer: Box::new(SGD::new(1.0)),
         }
     }
 }
 
-impl Perceptron<SGD> {
+impl Perceptron {
     /// Creates a perceptron classifier using default hyperparameters.
     ///
     /// Equivalent to:
@@ -120,12 +120,12 @@ impl Perceptron<SGD> {
     ///     .batch_size(32)
     ///     .build();
     /// ```
-    pub fn builder() -> Builder<SGD> {
+    pub fn builder() -> Builder {
         Builder::default()
     }
 }
 
-impl<T: Optimizer> Perceptron<T> {
+impl Perceptron {
 
     /// Returns a reference to the learned weight vector.
     pub fn weights(&self) -> &[f64] {
@@ -245,7 +245,7 @@ impl<T: Optimizer> Perceptron<T> {
     }
 }
 
-impl<T: Optimizer> Builder<T> {
+impl Builder {
 
     /// Sets the number of training epochs.
     pub fn epochs(mut self, epochs: usize) -> Self {
@@ -262,15 +262,15 @@ impl<T: Optimizer> Builder<T> {
     }
 
     /// Sets a custom optimizer.
-    pub fn optimizer(mut self, optimizer: T) -> Builder<T> {
-        self.optimizer = optimizer;
+    pub fn optimizer<O: Optimizer + 'static>(mut self, optimizer: O) -> Builder {
+        self.optimizer = Box::new(optimizer);
         self
     }
 
     /// Builds the untrained [`Perceptron`] model.
     ///
     /// Parameters are initialized during [`fit`].
-    pub fn build(self) -> Perceptron<T> {
+    pub fn build(self) -> Perceptron {
         Perceptron {
             weights: Vec::new(),
             bias: [0.0],

@@ -38,7 +38,7 @@ use rand::seq::SliceRandom;
 ///     .epochs(200)
 ///     .build();
 /// ```
-pub struct SGDRegressor<T: Optimizer> {
+pub struct SGDRegressor {
     /// Learned feature weights.
     ///
     /// Initialized inside [`fit`].
@@ -57,7 +57,7 @@ pub struct SGDRegressor<T: Optimizer> {
     batch_size: usize,
 
     /// Optimizer used for parameter updates.
-    optimizer: T,
+    optimizer: Box<dyn Optimizer>,
 }
 
 /// Builder for [`SGDRegressor`].
@@ -72,24 +72,24 @@ pub struct SGDRegressor<T: Optimizer> {
 /// - `epochs = 100`
 /// - `batch_size = 1` (pure SGD)
 /// - `optimizer = SGD::new(0.01)`
-pub struct Builder<T: Optimizer> {
+pub struct Builder {
     epochs: usize,
     batch_size: usize,
-    optimizer: T,
+    optimizer: Box<dyn Optimizer>,
 }
 
-impl Default for Builder<SGD> {
+impl Default for Builder {
     /// Creates a builder with default hyperparameters.
     fn default() -> Self {
         Self {
             epochs: 100,
             batch_size: 1,
-            optimizer: SGD::new(0.01),
+            optimizer: Box::new(SGD::new(0.01)),
         }
     }
 }
 
-impl SGDRegressor<SGD> {
+impl SGDRegressor {
     /// Creates an `SGDRegressor` using default settings.
     ///
     /// Equivalent to:
@@ -112,12 +112,12 @@ impl SGDRegressor<SGD> {
     ///     .build();
     /// ```
 
-    pub fn builder() -> Builder<SGD> {
+    pub fn builder() -> Builder {
         Builder::default()
     }
 }
 
-impl<T: Optimizer> SGDRegressor<T> {
+impl SGDRegressor {
 
     pub fn weights(&self) -> &[f64] {
         &self.weights
@@ -200,7 +200,7 @@ impl<T: Optimizer> SGDRegressor<T> {
     }
 }
 
-impl<T: Optimizer> Builder<T> {
+impl Builder {
     /// Sets the number of training epochs.
     pub fn epochs(mut self, epochs: usize) -> Self {
         self.epochs = epochs;
@@ -219,8 +219,8 @@ impl<T: Optimizer> Builder<T> {
     ///
     /// Allows replacing the default `SGD` optimizer with
     /// another implementation of [`Optimizer`].
-    pub fn optimizer(mut self, optimizer: T) -> Builder<T> {
-        self.optimizer = optimizer;
+    pub fn optimizer<O:Optimizer + 'static>(mut self, optimizer: O) -> Builder {
+        self.optimizer = Box::new(optimizer);
         self
     }
 
@@ -228,7 +228,7 @@ impl<T: Optimizer> Builder<T> {
     ///
     /// The returned model is **untrained**.
     /// Parameters are initialized during [`fit`].
-    pub fn build(self) -> SGDRegressor<T> {
+    pub fn build(self) -> SGDRegressor {
         SGDRegressor {
             weights: Vec::new(),
             bias: [0.0],
