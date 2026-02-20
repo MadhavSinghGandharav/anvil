@@ -73,7 +73,7 @@ impl Default for Builder {
         Self {
             epochs: 100,
             batch_size: 1,
-            optimizer: SGD::new(1.0),
+            optimizer: Box::new(SGD::new(1.0)),
         }
     }
 }

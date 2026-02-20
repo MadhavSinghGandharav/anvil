@@ -40,6 +40,7 @@
 /// - Indexing methods panic on out-of-bounds access.
 /// - `from_vec` panics if rows have inconsistent lengths.
 #[allow(dead_code)]
+#[derive(Debug,Clone)]
 pub struct DenseMatrix {
     /// Contiguous row-major data buffer.
     ///
