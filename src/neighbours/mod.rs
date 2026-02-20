@@ -1,4 +1,5 @@
-mod knn;
+mod knn_regressor;
+mod knn_classifier;
 mod metrics;
 pub(crate) mod algorithm;
 
@@ -47,5 +48,6 @@ pub use metrics::Euclidean;
 /// Re-export of Manhattan distance metric.
 pub use metrics::Manhattan;
 
-/// Re-export of KNN Regressor model.
-pub use knn::KNNRegressor;
+/// Re-export of KNN Regressor and Classifier model.
+pub use knn_regressor::KNNRegressor;
+pub use knn_classifier::KNNClassifier;
