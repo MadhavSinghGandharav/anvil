@@ -1,36 +1,28 @@
 use crate::neighbours::DistanceMetric;
 
-/// Euclidean distance metric.
+/// Euclidean (L2) distance metric.
 ///
-/// Computes the L2 distance between two vectors:
+/// Computes:
 ///
 /// √(Σ (aᵢ - bᵢ)²)
-///
-/// Commonly used in standard KNN implementations.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Euclidean;
 
-/// Manhattan distance metric.
+/// Manhattan (L1) distance metric.
 ///
-/// Computes the L1 distance between two vectors:
+/// Computes:
 ///
 /// Σ |aᵢ - bᵢ|
-///
-/// Often more robust to outliers compared to Euclidean distance.
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Manhattan;
 
 impl DistanceMetric for Euclidean {
-
-    /// Computes Euclidean (L2) distance between two vectors.
-    ///
-    /// # Panics
-    /// Panics if the vectors have different lengths.
     fn distance(&self, a: &[f64], b: &[f64]) -> f64 {
-        assert_eq!(a.len(), b.len(), "Vectors must have same length");
 
         let mut sum = 0.0;
 
-        for i in 0..a.len() {
-            let diff = a[i] - b[i];
+        for (&x, &y) in a.iter().zip(b.iter()) {
+            let diff = x - y;
             sum += diff * diff;
         }
 
@@ -39,18 +31,12 @@ impl DistanceMetric for Euclidean {
 }
 
 impl DistanceMetric for Manhattan {
-
-    /// Computes Manhattan (L1) distance between two vectors.
-    ///
-    /// # Panics
-    /// Panics if the vectors have different lengths.
     fn distance(&self, a: &[f64], b: &[f64]) -> f64 {
-        assert_eq!(a.len(), b.len(), "Vectors must have same length");
 
         let mut sum = 0.0;
 
-        for i in 0..a.len() {
-            sum += (a[i] - b[i]).abs();
+        for (&x, &y) in a.iter().zip(b.iter()) {
+            sum += (x - y).abs();
         }
 
         sum
