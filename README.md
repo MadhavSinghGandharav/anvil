@@ -6,7 +6,7 @@ A Rust-based machine learning library built from scratch with a focus on clarity
 
 ## ✨ Highlights
 
-- No external ML dependencies (as of now)
+- Minimal depencies
 - Lightweight and fast
 - Simple and intuitive API
 - Designed for extensibility
