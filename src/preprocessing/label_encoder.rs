@@ -4,8 +4,8 @@ use std::usize;
 use std::fmt::Debug;
 
 pub struct LabelEncoder<T> {
-    pub classes: Vec<T>,
-    map: HashMap<T, usize>
+    classes: Option<Vec<T>>,
+map: Option<HashMap<T, usize>>
 }
 
 
@@ -16,32 +16,40 @@ where
 {
     pub fn new() -> Self {
         Self { 
-            classes: Vec::new(),
-            map: HashMap::new()
+            classes: None,
+            map: None
         }
     }
     
     pub fn classes(&self) -> &Vec<T>{
-        &self.classes
+        self.classes.as_ref().expect("You need to fit beform transform")
     }
     pub fn fit(&mut self, y: &[T]) {
+
+        let mut map: HashMap<T,usize> = HashMap::new();
+        let mut classes: Vec<T> = Vec::new();
+
         for label in y {
-            match self.map.entry(label.clone()) {
+            match map.entry(label.clone()) {
                 Entry::Occupied(_) => {}
                 Entry::Vacant(v) => {
-                    let id = self.classes.len();
+                    let id = classes.len();
                     v.insert(id);
-                    self.classes.push(label.clone());
+                    classes.push(label.clone());
                 }
             }
         }
+        self.classes = Some(classes);
+        self.map = Some(map);
     }
 
     pub fn transform(&self, y:&[T]) -> Vec<usize> {
+
+        let map = self.map.as_ref().expect("You need to fit before transorm");
         let mut encoded = Vec::with_capacity(y.len());
 
         for label in y{
-            match self.map.get(label) {
+            match map.get(label) {
                 Some(&id) => encoded.push(id),
                 None => panic!("new values encounterd {:?}",label),
             }
