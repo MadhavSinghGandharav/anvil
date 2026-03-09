@@ -21,7 +21,7 @@ where
         }
     }
     
-    pub fn classes(&self) -> &Vec<T>{
+    pub fn classes(&self) -> &[T]{
         self.classes.as_ref().expect("You need to fit beform transform")
     }
     pub fn fit(&mut self, y: &[T]) {
