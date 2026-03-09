@@ -1,87 +1,111 @@
-use core::f64;
-
 use crate::{
     core::{DenseMatrix, utils::dot},
-    optim::{Optimizer, SGD}, preprocessing::LabelEncoder,
+    optim::{Optimizer, SGD},
+    preprocessing::LabelEncoder,
 };
+
 use rand::seq::SliceRandom;
 
-/// Linear binary classifier trained using the Perceptron algorithm.
+/// Linear binary classifier trained using the **Perceptron algorithm**.
 ///
-/// The model learns a linear decision boundary of the form:
+/// The perceptron learns a **linear decision boundary** of the form:
 ///
-/// `f(x) = w^T x + b`
+/// ```text
+/// f(x) = wᵀx + b
+/// ```
 ///
 /// where:
-/// - `w` is the weight vector
-/// - `b` is the bias (intercept)
 ///
-/// A prediction is made using:
+/// - `w` = weight vector  
+/// - `b` = bias (intercept)
 ///
-/// `ŷ = sign(w^T x + b)`
+/// A prediction is made using the sign of the decision function:
 ///
-/// # Loss Function
+/// ```text
+/// ŷ = sign(wᵀx + b)
+/// ```
 ///
-/// This implementation optimizes the perceptron loss:
+/// # Training Rule
 ///
-/// `L = max(0, -y f(x))`
+/// For each sample `(x, y)` where `y ∈ {-1, 1}`:
 ///
-/// For each training sample:
+/// ```text
+/// if y * (wᵀx + b) ≤ 0:
+///     w ← w - η (-y x)
+///     b ← b - η (-y)
+/// ```
 ///
-/// - If `y * f(x) <= 0`, the parameters are updated.
-/// - Otherwise, no update is performed.
+/// where `η` is the learning rate.
 ///
 /// # Notes
 ///
-/// - Target labels must be encoded as `-1.0` or `1.0`.
-/// - Convergence is guaranteed only if the dataset is linearly separable.
-/// - When `batch_size = 1`, this reduces to the classical online perceptron.
-/// - For `batch_size > 1`, this performs mini-batch subgradient descent.
+/// - This implementation supports **binary classification only**.
+/// - Target labels are automatically encoded to `{-1, 1}`.
+/// - Convergence is guaranteed only if the dataset is **linearly separable**.
+///
+/// # Mini-Batch Training
+///
+/// When `batch_size = 1`, the algorithm behaves as the **classic online perceptron**.
+///
+/// When `batch_size > 1`, gradients are averaged across the batch and updated using
+/// the configured optimizer.
 ///
 /// # Example
 ///
 /// ```ignore
-/// let model = Perceptron::builder()
+/// let mut model = Perceptron::builder()
 ///     .epochs(200)
 ///     .batch_size(1)
 ///     .build();
+///
+/// model.fit(&x, &y);
+///
+/// let preds = model.predict(&x);
 /// ```
 pub struct Perceptron {
+
     /// Learned feature weights.
     ///
+    /// This vector has length equal to the number of features.
+    ///
     /// Initialized during [`fit`].
-    weights: Vec<f64>,
+    weights: Option<Vec<f64>>,
 
     /// Learned bias (intercept).
     ///
-    /// Stored as a length-1 array so it can be updated
-    /// using the same optimizer interface as weights.
-    bias: [f64; 1],
+    /// Stored as a length-1 array so the optimizer can update
+    /// it using the same interface as weights.
+    bias: Option<[f64;1]>,
 
     /// Number of training epochs.
     epochs: usize,
 
-    /// Mini-batch size.
+    /// Mini-batch size used during training.
     batch_size: usize,
 
-    /// Optimizer used for parameter updates.
+    /// Optimizer used for updating parameters.
     optimizer: Box<dyn Optimizer>,
 
-    classes: [usize;2]
+    /// Original class labels.
+    ///
+    /// The perceptron internally uses `{-1,1}` labels but predictions
+    /// are mapped back to these original class values.
+    classes: [usize;2],
 }
 
 /// Builder for configuring a [`Perceptron`] classifier.
 ///
 /// Allows customization of:
-/// - number of training epochs
-/// - mini-batch size
-/// - optimization algorithm
+///
+/// - training epochs
+/// - batch size
+/// - optimizer
 ///
 /// # Defaults
 ///
 /// - `epochs = 100`
-/// - `batch_size = 1` (pure online perceptron)
-/// - `optimizer = SGD::new(0.01)`
+/// - `batch_size = 1`
+/// - `optimizer = SGD(learning_rate = 1.0)`
 pub struct Builder {
     epochs: usize,
     batch_size: usize,
@@ -89,6 +113,8 @@ pub struct Builder {
 }
 
 impl Default for Builder {
+
+    /// Creates a builder with default hyperparameters.
     fn default() -> Self {
         Self {
             epochs: 100,
@@ -99,7 +125,8 @@ impl Default for Builder {
 }
 
 impl Perceptron {
-    /// Creates a perceptron classifier using default hyperparameters.
+
+    /// Creates a perceptron classifier with default parameters.
     ///
     /// Equivalent to:
     ///
@@ -110,16 +137,7 @@ impl Perceptron {
         Self::builder().build()
     }
 
-    /// Returns a builder for configuring a [`Perceptron`] classifier.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let model = Perceptron::builder()
-    ///     .epochs(500)
-    ///     .batch_size(32)
-    ///     .build();
-    /// ```
+    /// Returns a builder used to configure the model.
     pub fn builder() -> Builder {
         Builder::default()
     }
@@ -127,106 +145,156 @@ impl Perceptron {
 
 impl Perceptron {
 
-    /// Returns a reference to the learned weight vector.
+    /// Returns the learned weight vector.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the model has not been trained.
     pub fn weights(&self) -> &[f64] {
-        &self.weights
+        self.weights.as_ref().expect("Model not fitted")
     }
 
     /// Returns the learned bias value.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the model has not been trained.
     pub fn bias(&self) -> f64 {
-        self.bias[0]
+        self.bias.as_ref().expect("Model not fitted")[0]
     }
-    pub fn classes(&self) -> &[usize;2]{
+
+    /// Returns the original class labels.
+    pub fn classes(&self) -> &[usize;2] {
         &self.classes
     }
 
-    /// Predicts the class label for a single sample.
+    /// Predict class labels for a feature matrix.
     ///
-    /// Returns:
-    /// - `1.0` if `w^T x + b >= 0`
-    /// - `-1.0` otherwise
-    pub fn predict(&self, x: &[f64]) -> usize {
-        let fx = dot(x, &self.weights) + self.bias[0];
-        if fx >= 0.0 { self.classes[1] } else { self.classes[0] }
-        
-    }
-
-    /// Trains the perceptron classifier using mini-batch stochastic
-    /// subgradient descent.
+    /// Each row of `features` is treated as a separate sample.
+    ///
+    /// # Returns
+    ///
+    /// A vector containing predicted class labels.
     ///
     /// # Panics
     ///
     /// Panics if:
-    /// - `features.n_rows() != target.len()`
     ///
-    /// # Training Procedure
+    /// - the model has not been fitted
+    /// - the number of features does not match the trained model
+    pub fn predict(&self, features: &DenseMatrix) -> Vec<usize> {
+
+        let weights = self.weights.as_ref().expect("Model not fitted");
+        let bias = self.bias.as_ref().expect("Model not fitted")[0];
+
+        assert!(
+            features.n_cols() == weights.len(),
+            "Feature dimension mismatch"
+        );
+
+        let mut preds = Vec::with_capacity(features.n_rows());
+
+        for i in 0..features.n_rows() {
+
+            let row = features.row(i);
+            let fx = dot(row, weights) + bias;
+
+            if fx >= 0.0 {
+                preds.push(self.classes[1]);
+            } else {
+                preds.push(self.classes[0]);
+            }
+        }
+
+        preds
+    }
+
+    /// Encodes target labels to `{-1, 1}`.
     ///
-    /// For each epoch:
+    /// The original class labels are stored in [`classes`].
     ///
-    /// 1. Shuffle sample indices.
-    /// 2. Iterate over mini-batches.
-    /// 3. For each sample:
-    ///     - Compute `f(x) = w^T x + b`.
-    ///     - If `y * f(x) <= 0`, accumulate gradients:
-    ///         - `∂L/∂w = -y x`
-    ///         - `∂L/∂b = -y`
-    /// 4. Average gradients across the batch.
-    /// 5. Update parameters using the optimizer.
+    /// # Panics
     ///
-    /// # Target Format
-    ///
-    /// Target labels must be encoded as:
-    ///
-    /// `-1.0` or `1.0`
+    /// Panics if the dataset contains more than two classes.
     fn update_target(&mut self, target: &[usize]) -> Vec<f64> {
+
         let mut encoder = LabelEncoder::new();
         let encoded = encoder.fit_transform(target);
 
-        assert_eq!(encoder.classes().len(), 2);
+        assert_eq!(
+            encoder.classes().len(),
+            2,
+            "Perceptron supports only binary classification"
+        );
 
         self.classes = [
             encoder.classes()[0],
             encoder.classes()[1],
         ];
 
-            encoded
-                .into_iter()
-                .map(|i| if i == 0 { -1.0 } else { 1.0 })
-                .collect()
-    }    
+        encoded
+            .into_iter()
+            .map(|i| if i == 0 { -1.0 } else { 1.0 })
+            .collect()
+    }
 
+    /// Train the perceptron classifier.
+    ///
+    /// Uses **mini-batch stochastic subgradient descent**.
+    ///
+    /// # Parameters
+    ///
+    /// - `features` — input feature matrix
+    /// - `target` — class labels
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    ///
+    /// - number of samples does not match target length
+    /// - `batch_size == 0`
     pub fn fit(&mut self, features: &DenseMatrix, target: &[usize]) {
+
         let n_samples = features.n_rows();
         let n_features = features.n_cols();
 
-        assert_eq!(n_samples, target.len());
+        assert_eq!(
+            n_samples,
+            target.len(),
+            "Number of samples and targets must match"
+        );
 
+        let mut weights = vec![0.0; n_features];
+        let mut bias = [0.0];
 
-        // Initialize parameters
-        self.weights = vec![0.0; n_features];
-        let target = self.update_target(&target); 
-    
+        let target = self.update_target(target);
+
         let mut rng = rand::rng();
         let mut indices: Vec<usize> = (0..n_samples).collect();
 
         let mut gradient = vec![0.0; n_features];
         let mut bias_gradient = [0.0];
-        
+
         for _ in 0..self.epochs {
+
             indices.shuffle(&mut rng);
 
             for batch in indices.chunks(self.batch_size) {
+
                 gradient.fill(0.0);
                 bias_gradient[0] = 0.0;
 
                 for &idx in batch {
+
                     let row = features.row(idx);
-                    let fx = dot(row, &self.weights) + self.bias[0];
+                    let fx = dot(row, &weights) + bias[0];
 
                     if target[idx] * fx <= 0.0 {
-                        for j in 0..n_features {
-                            gradient[j] += -target[idx] * row[j];
+
+                        for (g, &x) in gradient.iter_mut().zip(row) {
+                            *g += -target[idx] * x;
                         }
+
                         bias_gradient[0] += -target[idx];
                     }
                 }
@@ -236,49 +304,63 @@ impl Perceptron {
                 for g in &mut gradient {
                     *g *= inv_bs;
                 }
+
                 bias_gradient[0] *= inv_bs;
 
-                self.optimizer.step(&mut self.weights, &gradient);
-                self.optimizer.step(&mut self.bias, &bias_gradient);
+                self.optimizer.step(&mut weights, &gradient);
+                self.optimizer.step(&mut bias, &bias_gradient);
             }
         }
+
+        self.weights = Some(weights);
+        self.bias = Some(bias);
     }
 }
 
 impl Builder {
 
-    /// Sets the number of training epochs.
+    /// Set the number of training epochs.
     pub fn epochs(mut self, epochs: usize) -> Self {
         self.epochs = epochs;
         self
     }
 
-    /// Sets the mini-batch size.
+    /// Set mini-batch size.
     ///
-    /// `batch_size = 1` corresponds to pure online perceptron.
+    /// `batch_size = 1` corresponds to the classical online perceptron.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `batch_size == 0`.
     pub fn batch_size(mut self, batch_size: usize) -> Self {
+
+        assert!(
+            batch_size > 0,
+            "batch_size must be greater than 0"
+        );
+
         self.batch_size = batch_size;
         self
     }
 
-    /// Sets a custom optimizer.
+    /// Use a custom optimizer.
     pub fn optimizer<O: Optimizer + 'static>(mut self, optimizer: O) -> Builder {
         self.optimizer = Box::new(optimizer);
         self
     }
 
-    /// Builds the untrained [`Perceptron`] model.
+    /// Build an untrained perceptron model.
     ///
     /// Parameters are initialized during [`fit`].
     pub fn build(self) -> Perceptron {
+
         Perceptron {
-            weights: Vec::new(),
-            bias: [0.0],
+            weights: None,
+            bias: None,
             epochs: self.epochs,
             batch_size: self.batch_size,
             optimizer: self.optimizer,
-            classes: [0;2]
-            
+            classes: [0;2],
         }
     }
 }

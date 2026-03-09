@@ -1,4 +1,3 @@
-
 use crate::{
     core::{DenseMatrix, utils::dot},
     optim::{Optimizer, SGD},
@@ -16,62 +15,38 @@ use rand::seq::SliceRandom;
 ///
 /// # Model
 ///
-/// The prediction function is:
+/// Prediction function:
 ///
 /// `ŷ = w^T x + b`
-///
-/// where:
-/// - `w` is the weight vector
-/// - `b` is the bias (intercept)
-///
-/// # Training
-///
-/// During training:
-/// - Data is shuffled every epoch.
-/// - Gradients are accumulated per mini-batch.
-/// - The optimizer updates both weights and bias.
-///
-/// # Example
-///
-/// ```ignore
-/// let model = SGDRegressor::builder()
-///     .epochs(200)
-///     .build();
-/// ```
 pub struct SGDRegressor {
     /// Learned feature weights.
     ///
-    /// Initialized inside [`fit`].
-    weights: Vec<f64>,
+    /// Initialized during [`fit`].
+    weights: Option<Vec<f64>>,
 
     /// Learned bias (intercept).
     ///
     /// Stored as a length-1 array so it can be updated
     /// using the same optimizer interface as weights.
-    bias: [f64; 1],
+    bias: Option<[f64; 1]>,
 
     /// Number of training epochs.
     epochs: usize,
 
-    /// Mini-batch size.
+    /// Mini-batch size used for SGD updates.
     batch_size: usize,
 
     /// Optimizer used for parameter updates.
     optimizer: Box<dyn Optimizer>,
 }
 
-/// Builder for [`SGDRegressor`].
+/// Builder for configuring [`SGDRegressor`].
 ///
-/// Allows configuration of:
-/// - number of epochs
-/// - batch size
-/// - optimizer
+/// Allows setting:
 ///
-/// # Defaults
-///
-/// - `epochs = 100`
-/// - `batch_size = 1` (pure SGD)
-/// - `optimizer = SGD::new(0.01)`
+/// - `epochs`
+/// - `batch_size`
+/// - `optimizer`
 pub struct Builder {
     epochs: usize,
     batch_size: usize,
@@ -80,6 +55,12 @@ pub struct Builder {
 
 impl Default for Builder {
     /// Creates a builder with default hyperparameters.
+    ///
+    /// Defaults:
+    ///
+    /// - `epochs = 100`
+    /// - `batch_size = 1`
+    /// - `optimizer = SGD(learning_rate = 0.01)`
     fn default() -> Self {
         Self {
             epochs: 100,
@@ -90,6 +71,7 @@ impl Default for Builder {
 }
 
 impl SGDRegressor {
+
     /// Creates an `SGDRegressor` using default settings.
     ///
     /// Equivalent to:
@@ -97,34 +79,31 @@ impl SGDRegressor {
     /// ```ignore
     /// SGDRegressor::builder().build()
     /// ```
-
     pub fn new() -> Self {
         Self::builder().build()
     }
- /// Returns a builder for configuring an `SGDRegressor`.
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let model = SGDRegressor::builder()
-    ///     .epochs(500)
-    ///     .batch_size(32)
-    ///     .build();
-    /// ```
 
+    /// Returns a builder used to configure the model.
     pub fn builder() -> Builder {
         Builder::default()
     }
-}
 
-impl SGDRegressor {
-
+    /// Returns learned weights.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the model has not been fitted.
     pub fn weights(&self) -> &[f64] {
-        &self.weights
+        self.weights.as_ref().expect("model not fitted")
     }
 
+    /// Returns the learned bias term.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the model has not been fitted.
     pub fn bias(&self) -> f64 {
-        self.bias[0]
+        self.bias.as_ref().expect("model not fitted")[0]
     }
 
     /// Fits the model using mini-batch SGD.
@@ -132,24 +111,28 @@ impl SGDRegressor {
     /// # Panics
     ///
     /// Panics if:
+    ///
     /// - `features.n_rows() != target.len()`
-    ///
-    /// # Algorithm
-    ///
-    /// For each epoch:
-    /// 1. Shuffle sample indices.
-    /// 2. Iterate over mini-batches.
-    /// 3. Accumulate gradients.
-    /// 4. Average gradients.
-    /// 5. Update weights and bias using the optimizer.
+    /// - `batch_size == 0`
     pub fn fit(&mut self, features: &DenseMatrix, target: &[f64]) {
+
         let n_samples = features.n_rows();
         let n_features = features.n_cols();
 
-        assert_eq!(n_samples, target.len());
+        assert_eq!(
+            n_samples,
+            target.len(),
+            "Number of samples and target values must match"
+        );
 
-        // Initialize parameters
-        self.weights = vec![0.0; n_features];
+        assert!(
+            self.batch_size > 0,
+            "batch_size must be greater than 0"
+        );
+
+        // initialize parameters
+        let mut weights = vec![0.0; n_features];
+        let mut bias = [0.0];
 
         let mut rng = rand::rng();
         let mut indices: Vec<usize> = (0..n_samples).collect();
@@ -158,32 +141,34 @@ impl SGDRegressor {
         let mut bias_gradient = [0.0];
 
         for _ in 0..self.epochs {
-            // Shuffle data each epoch
+
+            // shuffle samples each epoch
             indices.shuffle(&mut rng);
 
             for batch in indices.chunks(self.batch_size) {
+
                 gradient.fill(0.0);
                 bias_gradient[0] = 0.0;
 
                 for &idx in batch {
+
                     let row = features.row(idx);
 
-                    // Prediction
-                    let y_pred = dot(row, &self.weights) + self.bias[0];
+                    // prediction
+                    let y_pred = dot(row, &weights) + bias[0];
 
-                    // Error
+                    // error
                     let error = target[idx] - y_pred;
 
-                    // Weight gradient accumulation
-                    for j in 0..n_features {
-                        gradient[j] +=  -error * row[j];
+                    // accumulate gradients
+                    for (g, &x) in gradient.iter_mut().zip(row) {
+                        *g += -error * x;
                     }
 
-                    // Bias gradient accumulation
                     bias_gradient[0] += -error;
                 }
 
-                // Average gradients
+                // average gradients
                 let inv_bs = 1.0 / batch.len() as f64;
 
                 for g in &mut gradient {
@@ -192,33 +177,70 @@ impl SGDRegressor {
 
                 bias_gradient[0] *= inv_bs;
 
-                // Update parameters
-                self.optimizer.step(&mut self.weights, &gradient);
-                self.optimizer.step(&mut self.bias, &bias_gradient);
+                // update parameters
+                self.optimizer.step(&mut weights, &gradient);
+                self.optimizer.step(&mut bias, &bias_gradient);
             }
         }
+
+        self.weights = Some(weights);
+        self.bias = Some(bias);
+    }
+
+    /// Predicts target values for the given feature matrix.
+    ///
+    /// # Panics
+    ///
+    /// Panics if:
+    ///
+    /// - model is not fitted
+    /// - feature dimension mismatch
+    pub fn predict(&self, features: &DenseMatrix) -> Vec<f64>{
+
+        let weights = self.weights.as_ref().expect("Model not fitted");
+        let bias = self.bias.as_ref().expect("Model not fitted")[0];
+
+        assert!(
+            weights.len() == features.n_cols(),
+            "Feature dimension mismatch"
+        );
+
+        let mut preds = Vec::with_capacity(features.n_rows());
+
+        for i in 0..features.n_rows(){
+            let row = features.row(i);
+            let pred = dot(row, weights) + bias;
+            preds.push(pred);
+        }
+
+        preds
     }
 }
 
 impl Builder {
-    /// Sets the number of training epochs.
+
+    /// Sets number of training epochs.
     pub fn epochs(mut self, epochs: usize) -> Self {
         self.epochs = epochs;
         self
     }
 
-    /// Sets the mini-batch size.
+    /// Sets mini-batch size.
     ///
     /// `batch_size = 1` corresponds to pure SGD.
     pub fn batch_size(mut self, batch_size: usize) -> Self {
+        assert!(batch_size > 0, "batch_size must be greater than 0");
         self.batch_size = batch_size;
         self
     }
 
     /// Sets a custom optimizer.
     ///
-    /// Allows replacing the default `SGD` optimizer with
-    /// another implementation of [`Optimizer`].
+    /// Example:
+    ///
+    /// ```ignore
+    /// .optimizer(Adam::new(0.001))
+    /// ```
     pub fn optimizer<O:Optimizer + 'static>(mut self, optimizer: O) -> Builder {
         self.optimizer = Box::new(optimizer);
         self
@@ -226,12 +248,12 @@ impl Builder {
 
     /// Builds the `SGDRegressor`.
     ///
-    /// The returned model is **untrained**.
+    /// Returned model is **untrained**.
     /// Parameters are initialized during [`fit`].
     pub fn build(self) -> SGDRegressor {
         SGDRegressor {
-            weights: Vec::new(),
-            bias: [0.0],
+            weights: None,
+            bias: None,
             epochs: self.epochs,
             batch_size: self.batch_size,
             optimizer: self.optimizer,
