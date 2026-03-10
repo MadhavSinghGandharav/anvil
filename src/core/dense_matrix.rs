@@ -110,8 +110,10 @@ impl DenseMatrix {
     /// **O(1)**
     #[inline]
     pub fn row(&self, row: usize) -> &[f64] {
-        assert!(row < self.n_rows);
-
+        assert!(
+            row < self.n_rows,
+            "Row index out of bounds"
+        );
         let start = row * self.n_cols;
         &self.data[start..start + self.n_cols]
     }
@@ -261,6 +263,32 @@ impl DenseMatrix {
         }
     }
 
+    /// Convert matrix into a nested vector representation.
+    ///
+    /// Each inner vector corresponds to a row of the matrix.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let data = matrix.to_vec();
+    /// ```
+    pub fn to_vec(&self) -> Vec<Vec<f64>> {
+
+        let n_rows = self.n_rows();
+        let n_cols = self.n_cols();
+
+        let mut out = Vec::with_capacity(n_rows);
+
+        for i in 0..n_rows {
+
+            let start = i * n_cols;
+            let end = start + n_cols;
+
+            out.push(self.data[start..end].to_vec());
+        }
+        out
+    }
+
     /// Returns an immutable view of the underlying contiguous data buffer.
     ///
     /// The returned slice contains all elements in **row-major order**.
@@ -357,4 +385,5 @@ impl DenseMatrix {
             n_cols: cols,
         }
     }
+
 }
