@@ -4,5 +4,5 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ordered-float = "5.1.0"
+ndarray = "0.17.2"
 rand = "0.10.0"

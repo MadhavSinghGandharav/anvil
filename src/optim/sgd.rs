@@ -64,9 +64,11 @@ impl Optimizer for SGD {
     /// - In-place update.
     /// - No allocations.
     /// - Fully vector-length dependent.
+
     fn step(&mut self, weights: &mut [f64], gradient: &[f64]) {
-        for i in 0..weights.len() {
-            weights[i] -= self.lr * gradient[i];
+
+        for (w, g) in weights.iter_mut().zip(gradient) {
+            *w -= self.lr * g;
         }
     }
 }
