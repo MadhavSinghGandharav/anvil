@@ -1,6 +1,5 @@
-
 use anvil::linear_model::LogisticRegression;
-use ndarray::{ArrayView1, array};
+use ndarray::array;
 
 #[test]
 fn fit_runs() {
