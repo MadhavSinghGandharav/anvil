@@ -151,6 +151,9 @@ impl SGDRegressor {
                 let weights = params.slice(s![1..]);
                 let bias = params[0];
 
+                let mut grad_w = gradient.slice_mut(s![1..]);
+                let mut grad_b = 0.0;
+
                 for &idx in batch {
 
                     let row = features.row(idx);
@@ -163,14 +166,14 @@ impl SGDRegressor {
                     let grad = -error;
 
                     // bias gradient
-                    gradient[0] += grad;
+                    grad_b += grad;
 
                     // weight gradients
-                    let mut grad_w = gradient.slice_mut(s![1..]);
                     for (g, &x) in grad_w.iter_mut().zip(row.iter()) {
                         *g += grad * x;
                     }
                 }
+                gradient[0] = grad_b;
 
                 // average gradient
                 let inv_bs = 1.0 / batch.len() as f64;
