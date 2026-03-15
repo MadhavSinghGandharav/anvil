@@ -6,24 +6,31 @@ use crate::{
 use ndarray::{Array1, ArrayView1, ArrayView2, s};
 use rand::seq::SliceRandom;
 
-/// Linear binary classifier trained using **Logistic Regression**.
+/// Linear binary classifier trained using the **Perceptron algorithm**.
 ///
-/// The model learns a linear decision boundary:
+/// The perceptron learns a **linear decision boundary** of the form:
 ///
 /// f(x) = wᵀx + b
 ///
-/// and optimizes the **logistic loss**:
+/// A prediction is made using the sign of the decision function.
 ///
-/// L = log(1 + exp(-y(wᵀx + b)))
+/// # Training Rule
 ///
-/// where `y ∈ {-1, 1}`.
+/// For each sample `(x, y)` where `y ∈ {-1, 1}`:
+///
+/// if y * (wᵀx + b) ≤ 0:
+///     w ← w + η y x
+///     b ← b + η y
+///
+/// where `η` is the learning rate.
 ///
 /// # Notes
 ///
 /// - Supports **binary classification only**
 /// - Target labels are internally converted to `{-1,1}`
-/// - Uses **mini-batch stochastic gradient descent**
-pub struct LogisticRegression {
+/// - Uses mini-batch stochastic subgradient descent
+pub struct Perceptron {
+
     /// Model parameters `[bias, weights...]`
     params: Option<Array1<f64>>,
 
@@ -57,6 +64,7 @@ impl Default for Builder {
 }
 
 impl Builder {
+
     pub fn epochs(mut self, epochs: usize) -> Self {
         self.epochs = epochs;
         self
@@ -73,8 +81,8 @@ impl Builder {
         self
     }
 
-    pub fn build(self) -> LogisticRegression {
-        LogisticRegression {
+    pub fn build(self) -> Perceptron {
+        Perceptron {
             params: None,
             epochs: self.epochs,
             batch_size: self.batch_size,
@@ -84,18 +92,7 @@ impl Builder {
     }
 }
 
-#[inline]
-fn sigmoid(z: f64) -> f64 {
-    if z >= 0.0 {
-        let exp_neg = (-z).exp();
-        1.0 / (1.0 + exp_neg)
-    } else {
-        let exp_pos = z.exp();
-        exp_pos / (1.0 + exp_pos)
-    }
-}
-
-impl LogisticRegression {
+impl Perceptron {
 
     pub fn new() -> Self {
         Self::builder().build()
@@ -127,7 +124,7 @@ impl LogisticRegression {
         assert_eq!(
             encoder.classes().len(),
             2,
-            "LogisticRegression supports only binary classification"
+            "Perceptron supports only binary classification"
         );
 
         self.classes = [encoder.classes()[0], encoder.classes()[1]];
@@ -168,7 +165,7 @@ impl LogisticRegression {
 
                 let weights = params.slice(s![1..]);
                 let bias = params[0];
-
+                
                 let mut grad_w = gradient.slice_mut(s![1..]);
                 let mut grad_b = 0.0;
 
@@ -177,18 +174,18 @@ impl LogisticRegression {
                     let row = features.row(idx);
 
                     let y = target[idx];
-                    let z = row.dot(&weights) + bias;
+                    let y_pred = row.dot(&weights) + bias;
 
-                    let sig = sigmoid(-y * z);
-                    let coeff = -y * sig;
+                    if y * y_pred <= 0.0 {
 
-                    for (g, &x) in grad_w.iter_mut().zip(row.iter()) {
-                        *g += coeff * x;
+
+                        for (g, &x) in grad_w.iter_mut().zip(row.iter()) {
+                            *g -= y * x;
+                        }
+
+                        grad_b -= y;
                     }
-
-                    grad_b += coeff;
                 }
-
                 gradient[0] = grad_b;
 
                 let inv_bs = 1.0 / batch.len() as f64;
@@ -202,7 +199,7 @@ impl LogisticRegression {
         self.params = Some(params);
     }
 
-    pub fn predict_proba(&self, features: ArrayView2<f64>) -> Array1<f64> {
+    pub fn predict(&self, features: ArrayView2<f64>) -> Array1<usize> {
 
         let params = self.params.as_ref().expect("Model not fitted");
 
@@ -218,26 +215,16 @@ impl LogisticRegression {
 
         for (i, row) in features.outer_iter().enumerate() {
 
-            let fx = sigmoid(row.dot(&weights) + bias);
-            preds[i] = fx;
+            let fx = row.dot(&weights) + bias;
+
+            if fx >= 0.0 {
+                preds[i] = self.classes[1];
+            } else {
+                preds[i] = self.classes[0];
+            }
         }
 
         preds
     }
-
-    pub fn predict(&self, features: ArrayView2<f64>) -> Array1<usize> {
-
-        let probs = self.predict_proba(features);
-
-        probs
-            .into_iter()
-            .map(|p| {
-                if p >= 0.5 {
-                    self.classes[1]
-                } else {
-                    self.classes[0]
-                }
-            })
-            .collect()
-    }
 }
+
