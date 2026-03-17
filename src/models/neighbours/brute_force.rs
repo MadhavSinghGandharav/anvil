@@ -1,5 +1,5 @@
 use ndarray::{Array2, ArrayView1};
-use crate::models::neighbours::{DistanceMetric, NeighbourSearch};
+use crate::{models::neighbours::{DistanceMetric, NeighbourSearch}, neighbours::metric::Euclidean};
 
 /// Brute-force nearest neighbour search.
 ///
@@ -22,9 +22,18 @@ pub struct BruteForce<M: DistanceMetric> {
     metric: M,
 }
 
-impl <M: DistanceMetric> BruteForce<M> {
-    pub fn new(metric: M) -> Self{
-        Self{
+impl BruteForce<Euclidean> {
+    pub fn new() -> Self {
+        Self {
+            features: None,
+            metric: Euclidean,
+        }
+    }
+}
+
+impl<M: DistanceMetric> BruteForce<M> {
+    pub fn with_metric(metric: M) -> Self {
+        Self {
             features: None,
             metric,
         }
