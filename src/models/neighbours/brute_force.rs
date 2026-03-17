@@ -16,20 +16,25 @@ use crate::models::neighbours::{DistanceMetric, NeighbourSearch};
 pub struct BruteForce<M: DistanceMetric> {
 
     /// Training feature matrix of shape `(n_samples, n_features)`
-    features: Array2<f64>,
+    features: Option<Array2<f64>>,
 
     /// Distance metric used for neighbour search
     metric: M,
 }
 
-impl<M: DistanceMetric> NeighbourSearch<M> for BruteForce<M> {
-
-    /// Stores the training matrix and metric for future queries
-    fn build(data: Array2<f64>, metric: M) -> Self {
-        BruteForce {
-            features: data,
+impl <M: DistanceMetric> BruteForce<M> {
+    pub fn new(metric: M) -> Self{
+        Self{
+            features: None,
             metric,
         }
+    }
+}
+impl<M: DistanceMetric> NeighbourSearch for BruteForce<M> {
+
+    /// Stores the training matrix and metric for future queries
+    fn build(&mut self, data: Array2<f64>) {
+        self.features = Some(data);
     }
 
     /// Returns the `k` nearest neighbours for a given query point
@@ -41,17 +46,18 @@ impl<M: DistanceMetric> NeighbourSearch<M> for BruteForce<M> {
     /// - query point dimension does not match training data
     /// - `k` is zero
     fn query(&self, point: ArrayView1<f64>, k: usize) -> Vec<(usize, f64)> {
-
+        
+        let features = self.features.as_ref().expect("Apply build first");
         assert!(k > 0, "k must be greater than 0");
 
         assert_eq!(
-            self.features.ncols(),
+            features.ncols(),
             point.len(),
             "Query point dimension mismatch"
         );
 
         // compute distance from query point to every training row
-        let mut distances: Vec<(usize, f64)> = self.features
+        let mut distances: Vec<(usize, f64)> = features
             .outer_iter()
             .enumerate()
             .map(|(i, row)| (i, self.metric.distance(row, point)))

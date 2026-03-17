@@ -8,8 +8,8 @@ pub trait DistanceMetric {
     fn distance(&self, a: ArrayView1<f64>, b: ArrayView1<f64>) -> f64;
 }
 
-pub trait NeighbourSearch <M: DistanceMetric>{
-    fn build(data: Array2<f64>, metric: M) -> Self;
+pub trait NeighbourSearch{
+    fn build(&mut self, data: Array2<f64>);
     fn query(&self, point: ArrayView1<f64>, k: usize) -> Vec<(usize, f64)>;
 }
 
