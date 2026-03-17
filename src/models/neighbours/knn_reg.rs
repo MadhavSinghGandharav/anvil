@@ -1,12 +1,11 @@
-use std::collections::HashMap;
 use ndarray::{Array1, ArrayView1, ArrayView2};
 use crate::neighbours::{NeighbourSearch, Weight};
 use crate::neighbours::metric::Euclidean;
 use crate::neighbours::brute_force::BruteForce;
 
-/// K-Nearest Neighbors classifier.
+/// K-Nearest Neighbors regressor.
 ///
-/// A generic, zero-cost implementation of KNN classification.
+/// A generic, zero-cost implementation of KNN regression.
 ///
 /// The type parameter `N` determines the neighbour search strategy
 /// used at compile time — no dynamic dispatch, no runtime branching.
@@ -16,7 +15,7 @@ use crate::neighbours::brute_force::BruteForce;
 /// - Supports uniform and distance-based weighting
 /// - Pluggable search algorithms (`BruteForce`, `KDTree`, ...)
 /// - `BruteForce<Euclidean>` is the default configuration
-pub struct KNNClassifier<N>
+pub struct KNNRegressor<N>
 where
     N: NeighbourSearch,
 {
@@ -26,14 +25,14 @@ where
     /// Neighbour search strategy
     searcher: N,
 
-    /// Weighting strategy for vote aggregation
+    /// Weighting strategy for prediction aggregation
     weights: Weight,
 
-    /// Training class labels (set during `fit`)
-    targets: Option<Vec<usize>>,
+    /// Training target values (set during `fit`)
+    targets: Option<Vec<f64>>,
 }
 
-/// Builder for configuring [`KNNClassifier`]
+/// Builder for configuring [`KNNRegressor`]
 pub struct Builder<N>
 where
     N: NeighbourSearch,
@@ -59,7 +58,7 @@ impl Default for Builder<BruteForce<Euclidean>> {
     }
 }
 
-impl KNNClassifier<BruteForce<Euclidean>> {
+impl KNNRegressor<BruteForce<Euclidean>> {
 
     /// Create model with default configuration
     pub fn new() -> Self {
@@ -98,8 +97,8 @@ where
     }
 
     /// Build model
-    pub fn build(self) -> KNNClassifier<N> {
-        KNNClassifier {
+    pub fn build(self) -> KNNRegressor<N> {
+        KNNRegressor {
             k: self.k,
             searcher: self.searcher,
             weights: self.weights,
@@ -108,18 +107,18 @@ where
     }
 }
 
-impl<N> KNNClassifier<N>
+impl<N> KNNRegressor<N>
 where
     N: NeighbourSearch,
 {
-    /// Fits the classifier using training data
+    /// Fits the regressor using training data
     ///
     /// # Panics
     ///
     /// Panics if:
     ///
     /// - features and targets size mismatch
-    pub fn fit(&mut self, features: ArrayView2<f64>, targets: ArrayView1<usize>) {
+    pub fn fit(&mut self, features: ArrayView2<f64>, targets: ArrayView1<f64>) {
 
         assert_eq!(
             features.nrows(),
@@ -131,28 +130,28 @@ where
         self.searcher.build(features.to_owned());
     }
 
-    /// Predict target labels
+    /// Predict target values
     ///
     /// # Panics
     ///
     /// Panics if:
     ///
     /// - model not fitted
-    pub fn predict(&self, features: ArrayView2<f64>) -> Array1<usize> {
+    pub fn predict(&self, features: ArrayView2<f64>) -> Array1<f64> {
 
         let targets = self.targets.as_ref().expect("Model not fitted");
 
         let mut predictions = Array1::zeros(features.nrows());
-        let mut votes: HashMap<usize, f64> = HashMap::new();
 
         for (i, row) in features.outer_iter().enumerate() {
 
             // find k nearest neighbours
             let neighbours = self.searcher.query(row, self.k);
 
-            votes.clear();
+            let mut numerator   = 0.0;
+            let mut denominator = 0.0;
 
-            // accumulate weighted votes per class
+            // accumulate weighted target values
             for (idx, dist) in neighbours {
 
                 let weight = match self.weights {
@@ -160,15 +159,12 @@ where
                     Weight::Distance => if dist == 0.0 { 1.0 } else { 1.0 / dist },
                 };
 
-                *votes.entry(targets[idx]).or_insert(0.0) += weight;
+                numerator   += weight * targets[idx];
+                denominator += weight;
             }
 
-            // pick class with highest total weight
-            predictions[i] = votes
-                .iter()
-                .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-                .map(|(&label, _)| label)
-                .unwrap();
+            // weighted average of neighbour targets
+            predictions[i] = numerator / denominator;
         }
 
         predictions

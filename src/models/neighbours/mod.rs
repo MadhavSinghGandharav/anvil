@@ -2,10 +2,12 @@ mod brute_force;
 pub mod metric;
 mod kdtree;
 mod knn_clf;
+mod knn_reg;
 
 pub use knn_clf::KNNClassifier;
 pub use kdtree::KDTree;
 pub use brute_force::BruteForce;
+pub use knn_reg::KNNRegressor;
 
 use ndarray::{ArrayView1,Array2};
 
