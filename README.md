@@ -80,6 +80,7 @@ let mut model = KNNClassifier::builder()
 |---|---|
 | `GaussianNB` | Multi-class classification |
 | `BernoulliNB` | Multi-class classification |
+| `MultinomialNB` | Multi-class classification |
 
 ### Neighbours
 
