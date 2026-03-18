@@ -250,27 +250,14 @@ impl GaussianNB {
                 *iv =  1.0 / (2.0 * v);
             });
 
-        // compute class log-prior probabilities
-        let priors = if let Some(ref p) = self.class_prob {
-            p.clone()
+       // compute class log-prior probabilities
+        let total = target.len() as f64;
+
+        let log_priors: Vec<f64> = if let Some(ref p) = self.class_prob {
+            p.iter().map(|p| p.ln()).collect()
         } else {
-
-            let total = target.len() as f64;
-
-            let mut priors = vec![0.0f64; n_classes];
-
-            for &c in &target {
-                priors[c] += 1.0;
-            }
-
-            for p in &mut priors {
-                *p /= total;
-            }
-
-            priors
+            count.iter().map(|&c| (c as f64 / total).ln()).collect()
         };
-
-        let log_priors: Vec<f64> = priors.iter().map(|p| p.ln()).collect();
 
         self.mean            = Some(sum);
         self.log_gauss_const = Some(log_const);
