@@ -89,6 +89,11 @@ let mut model = KNNClassifier::builder()
 | `KNNClassifier<N>` | Multi-class classification |
 | `KNNRegressor<N>` | Regression |
 
+### Trees
+| Model | Task |
+|---|---|
+|`DecisionTreeClassifier` | Muti-class classification
+
 
 ## License
 
