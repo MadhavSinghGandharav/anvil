@@ -1,7 +1,9 @@
 mod tree_clf;
+mod tree_reg;
 mod impurity; 
 
 pub use tree_clf::DecisionTreeClassifier; 
+pub use tree_reg::DecisionTreeRegressor;
 
 #[derive(Debug)]
 enum Node<T>{
@@ -18,7 +20,9 @@ enum Node<T>{
 
 pub enum Criteria{
     Gini,
-    Entropy
+    Entropy,
+    MeanSquared,
+    MeanAbs,
 }
 
 pub enum Splitter{
