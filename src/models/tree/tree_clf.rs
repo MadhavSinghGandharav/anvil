@@ -4,7 +4,7 @@ use rand::seq::SliceRandom;
 use ndarray::{Array1, ArrayView1, ArrayView2};
 use crate::models::tree::{Criteria, Node, Splitter};
 use crate::models::tree::impurity::{entropy, gini};
-use crate::preprocessing::LabelEncoder;
+use crate::preprocessing::encoder::LabelEncoder;
 
 /// Decision Tree classifier.
 ///

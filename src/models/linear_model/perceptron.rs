@@ -1,6 +1,6 @@
 use crate::{
     optim::{Optimizer, SGD},
-    preprocessing::LabelEncoder,
+    preprocessing::encoder::LabelEncoder,
 };
 use ndarray::{Array1, ArrayView1, ArrayView2, s};
 use rand::seq::SliceRandom;

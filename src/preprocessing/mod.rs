@@ -1,2 +1,3 @@
-mod encoder;
-pub use encoder::LabelEncoder;
+pub mod encoder;
+pub mod scaler;
+

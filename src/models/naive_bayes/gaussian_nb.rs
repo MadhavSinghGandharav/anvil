@@ -1,4 +1,4 @@
-use crate::preprocessing::LabelEncoder;
+use crate::preprocessing::encoder::LabelEncoder;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 use std::f64::consts::PI;
 
