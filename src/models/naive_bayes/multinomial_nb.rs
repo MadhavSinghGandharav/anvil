@@ -1,4 +1,4 @@
-use crate::preprocessing::LabelEncoder;
+use crate::preprocessing::encoder::LabelEncoder;
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
 /// Multinomial Naive Bayes classifier.
@@ -135,6 +135,10 @@ impl MultinomialNB {
         assert!(
             features.nrows() > 0,
             "Cannot fit with zero samples"
+        );
+
+        assert!(features.iter().all(|&x| x > 0.0),
+            "Negative values found"
         );
 
         // encode class labels into contiguous indices
