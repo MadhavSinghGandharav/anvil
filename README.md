@@ -11,6 +11,8 @@ Anvil provides classical ML algorithms with a consistent builder API across all 
 - **Linear models** — SGD regression, logistic regression, perceptron
 - **Naive Bayes** — Gaussian, Bernoulli
 - **Neighbours** — KNN classifier and regressor with pluggable search algorithms and distance metrics
+- **Trees** - DecisionTree classifier and regressor
+- **Preprocessing** - Scalers and Encoders
 - Consistent builder API across all models
 - Pluggable optimizers via the `Optimizer` trait
 - Mini-batch training with shuffled SGD
@@ -64,36 +66,7 @@ let mut model = KNNClassifier::builder()
 
 ---
 
-## Algorithms
 
-### Linear Models
-
-| Model | Task |
-|---|---|
-| `SGDRegressor` | Regression |
-| `LogisticRegression` | Binary classification |
-| `Perceptron` | Binary classification |
-
-### Naive Bayes
-
-| Model | Task |
-|---|---|
-| `GaussianNB` | Multi-class classification |
-| `BernoulliNB` | Multi-class classification |
-| `MultinomialNB` | Multi-class classification |
-
-### Neighbours
-
-| Model | Task |
-|---|---|
-| `KNNClassifier<N>` | Multi-class classification |
-| `KNNRegressor<N>` | Regression |
-
-### Trees
-| Model | Task |
-|---|---|
-|`DecisionTreeClassifier` | Muti-class classification
-|`DecisionTreeRegressor` | Regression
 
 ## License
 
