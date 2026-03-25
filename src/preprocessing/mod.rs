@@ -1,3 +1,3 @@
 pub mod encoder;
-pub mod scaler;
+pub mod transformer;
 
