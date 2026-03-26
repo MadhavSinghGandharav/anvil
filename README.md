@@ -9,10 +9,10 @@ Anvil provides classical ML algorithms with a consistent builder API across all 
 ## Features
 
 - **Linear models** — SGD regression, logistic regression, perceptron
-- **Naive Bayes** — Gaussian, Bernoulli
+- **Naive Bayes** — Gaussian, Bernoulli , Multinomial
 - **Neighbours** — KNN classifier and regressor with pluggable search algorithms and distance metrics
 - **Trees** - DecisionTree classifier and regressor
-- **Preprocessing** - Scalers and Encoders
+- **Preprocessing** - Scalers (StandardScaler,MinMaxScaler,MaxAbsolute,QuantileTransformer) and Encoders (LabelEncoder) 
 - Consistent builder API across all models
 - Pluggable optimizers via the `Optimizer` trait
 - Mini-batch training with shuffled SGD
