@@ -1,20 +1,21 @@
-use std::cmp::Ordering;
-use rand::{Rng,seq::SliceRandom};
+use rand::{Rng,RngExt};
+use rand::seq::SliceRandom;
 use ndarray::{Array1, ArrayView1, ArrayView2};
 use crate::models::tree::{Criteria, Node};
 use crate::models::tree::impurity::{entropy, gini};
 use crate::preprocessing::encoder::LabelEncoder;
 
-/// Decision Tree classifier.
+/// Extra Tree classifier.
 ///
 /// Builds a binary tree by recursively splitting the feature space
-/// using the best split found at each node.
+/// using a random threshold for each candidate feature.
 ///
 /// # Notes
 ///
 /// - Supports `Gini` and `Entropy` criteria
-/// - Uses presorted indices — O(n log n) once at `fit`, O(n) per node
-pub struct DecisionTreeClassifier {
+/// - No sorting required — random threshold in [min, max] per feature
+/// - Much faster per node than Decision Tree at the cost of higher bias
+pub struct ExtraTreeClassifier {
 
     /// Impurity criterion used for split evaluation
     criteria: Criteria,
@@ -40,7 +41,7 @@ pub struct DecisionTreeClassifier {
     classes: Vec<usize>,
 }
 
-/// Builder for configuring [`DecisionTreeClassifier`]
+/// Builder for configuring [`ExtraTreeClassifier`]
 pub struct Builder {
     criteria: Criteria,
     min_samples_split: usize,
@@ -110,7 +111,7 @@ impl Builder {
     /// - min_samples_leaf < 1
     /// - max_features < 1
     /// - criteria is not Gini or Entropy
-    pub fn build(self) -> DecisionTreeClassifier {
+    pub fn build(self) -> ExtraTreeClassifier {
 
         assert!(
             self.min_samples_split >= 2,
@@ -134,7 +135,7 @@ impl Builder {
             _ => panic!("Invalid criterion for classification"),
         }
 
-        DecisionTreeClassifier {
+        ExtraTreeClassifier {
             criteria: self.criteria,
             min_samples_split: self.min_samples_split,
             min_samples_leaf: self.min_samples_leaf,
@@ -146,58 +147,89 @@ impl Builder {
     }
 }
 
-/// Shared context passed to split finding functions
+/// Shared context passed to split finding function
 struct SplitContext<'a> {
-    features:         ArrayView2<'a, f64>,
-    target:           ArrayView1<'a, usize>,
-    sorted_idx:       &'a [Vec<usize>],
-    parent_counts:    &'a [usize],
-    parent_impurity:  f64,
-    n_samples:        usize,
-    n_classes:        usize,
+    features:        ArrayView2<'a, f64>,
+    target:          ArrayView1<'a, usize>,
+    indices:         &'a [usize],
+    parent_counts:   &'a [usize],
+    parent_impurity: f64,
+    n_samples:       usize,
+    n_classes:       usize,
     min_samples_leaf: usize,
-    criteria:         fn(&[usize], usize) -> f64,
+    criteria:        fn(&[usize], usize) -> f64,
 }
 
-/// Result of a split search
+/// Result of a split search — includes partition
 struct SplitResult {
     best_ig:        f64,
     best_feature:   usize,
     best_threshold: f64,
-    best_split_pos: usize,
+    left_indices:   Vec<usize>,
+    right_indices:  Vec<usize>,
 }
 
-/// Evaluates all split candidates for a single feature
-#[inline]
-fn evaluate_feature(ctx: &SplitContext, f: usize) -> (f64, usize, f64) {
+/// Finds the best random split across a shuffled subset of features.
+///
+/// For each candidate feature, a random threshold is drawn from [min, max].
+/// The split with the highest information gain is selected.
+/// Partition into left/right indices is done once at the end.
+fn find_random_best_split(
+    ctx: &SplitContext,
+    max_features: usize,
+    rng: &mut impl Rng,
+) -> SplitResult {
 
-    let col = &ctx.sorted_idx[f];
+    let n_features = ctx.features.ncols();
 
+    let mut order: Vec<usize> = (0..n_features).collect();
+    order.shuffle(rng);
+
+    // reusable buffers — avoid allocation per feature
     let mut left_counts  = vec![0usize; ctx.n_classes];
-    let mut right_counts = ctx.parent_counts.to_vec();
+    let mut right_counts = vec![0usize; ctx.n_classes];
 
-    let mut best_ig        = 0.0;
-    let mut best_pos       = 0;
+    let mut best_ig        = f64::NEG_INFINITY;
+    let mut best_feature   = 0;
     let mut best_threshold = 0.0;
 
-    for j in 0..col.len() - 1 {
+    for &f in order.iter().take(max_features) {
 
-        let curr = col[j];
-        let next = col[j + 1];
+        // compute min/max for this feature over current indices
+        let mut min = f64::INFINITY;
+        let mut max = f64::NEG_INFINITY;
 
-        left_counts[ctx.target[curr]]  += 1;
-        right_counts[ctx.target[curr]] -= 1;
+        for &idx in ctx.indices {
+            let v = ctx.features[[idx, f]];
+            if v < min { min = v; }
+            if v > max { max = v; }
+        }
 
-        let left_size  = j + 1;
+        // all values identical — no valid split
+        if min == max {
+            continue;
+        }
+
+        let thr = rng.random_range(min..max);
+
+        // reset counts
+        left_counts.fill(0);
+        right_counts.copy_from_slice(ctx.parent_counts);
+
+        let mut left_size = 0;
+
+        for &idx in ctx.indices {
+            if ctx.features[[idx, f]] <= thr {
+                left_counts[ctx.target[idx]]  += 1;
+                right_counts[ctx.target[idx]] -= 1;
+                left_size += 1;
+            }
+        }
+
         let right_size = ctx.n_samples - left_size;
 
         if left_size  < ctx.min_samples_leaf
         || right_size < ctx.min_samples_leaf {
-            continue;
-        }
-
-        // skip if same feature value — not a valid split boundary
-        if ctx.features[[curr, f]] == ctx.features[[next, f]] {
             continue;
         }
 
@@ -207,40 +239,26 @@ fn evaluate_feature(ctx: &SplitContext, f: usize) -> (f64, usize, f64) {
 
         if ig > best_ig {
             best_ig        = ig;
-            best_pos       = j;
-            best_threshold = (ctx.features[[curr, f]] + ctx.features[[next, f]]) / 2.0;
-        }
-    }
-
-    (best_ig, best_pos, best_threshold)
-}
-
-/// Finds the best split across a randomly shuffled subset of features.
-///
-/// When `max_features == n_features`, all features are evaluated in random order.
-/// When `max_features < n_features`, only a random subset is evaluated.
-
-fn find_best_split(ctx: &SplitContext, max_features: usize, rng: &mut impl Rng) -> SplitResult {
-    let mut order: Vec<usize> = (0..ctx.sorted_idx.len()).collect();
-    order.shuffle(rng);  // har baar shuffle
-
-    let mut best_ig        = 0.0;
-    let mut best_feature   = 0;
-    let mut best_threshold = 0.0;
-    let mut best_split_pos = 0;
-
-    for &f in order.iter().take(max_features) {
-        let (ig, pos, threshold) = evaluate_feature(ctx, f);
-        if ig > best_ig {
-            best_ig        = ig;
             best_feature   = f;
-            best_split_pos = pos;
-            best_threshold = threshold;
+            best_threshold = thr;
         }
     }
 
-    SplitResult { best_ig, best_feature, best_threshold, best_split_pos }
+    // partition once using best feature + threshold
+    let mut left_indices  = Vec::with_capacity(ctx.indices.len());
+    let mut right_indices = Vec::with_capacity(ctx.indices.len());
+
+    for &idx in ctx.indices {
+        if ctx.features[[idx, best_feature]] <= best_threshold {
+            left_indices.push(idx);
+        } else {
+            right_indices.push(idx);
+        }
+    }
+
+    SplitResult { best_ig, best_feature, best_threshold, left_indices, right_indices }
 }
+
 /// Returns the majority class label among the given indices
 #[inline]
 fn majority(indices: &[usize], target: ArrayView1<usize>, n_classes: usize) -> usize {
@@ -274,7 +292,7 @@ fn traverse(node: &Node<usize>, row: ArrayView1<f64>) -> usize {
     }
 }
 
-impl DecisionTreeClassifier {
+impl ExtraTreeClassifier {
 
     /// Create model with default configuration
     pub fn new() -> Self {
@@ -291,7 +309,7 @@ impl DecisionTreeClassifier {
         &self.classes
     }
 
-    /// Fits the decision tree classifier
+    /// Fits the extra tree classifier
     ///
     /// # Panics
     ///
@@ -329,19 +347,6 @@ impl DecisionTreeClassifier {
         let n_classes = encoder.classes().len();
         self.classes  = encoder.classes().to_vec();
 
-        // precompute sorted indices per feature — O(n log n) once
-        let sorted_idx: Vec<Vec<usize>> = (0..n_features)
-            .map(|f| {
-                let mut col: Vec<usize> = (0..n_samples).collect();
-                col.sort_unstable_by(|&a, &b| {
-                    features[[a, f]]
-                        .partial_cmp(&features[[b, f]])
-                        .unwrap_or(Ordering::Equal)
-                });
-                col
-            })
-            .collect();
-
         // select impurity function at fit time — no branching in inner loop
         let impurity_fn: fn(&[usize], usize) -> f64 = match self.criteria {
             Criteria::Entropy => entropy,
@@ -349,10 +354,12 @@ impl DecisionTreeClassifier {
             _ => panic!("Invalid criterion for classification"),
         };
 
+        let indices: Vec<usize> = (0..n_samples).collect();
+
         let mut rng = rand::rng();
 
         self.root = Some(Box::new(self.build_tree(
-            sorted_idx,
+            indices,
             0,
             features,
             ArrayView1::from(&encoded),
@@ -384,7 +391,7 @@ impl DecisionTreeClassifier {
 
     fn build_tree(
         &self,
-        sorted_idx: Vec<Vec<usize>>,
+        indices: Vec<usize>,
         depth: usize,
         features: ArrayView2<f64>,
         target: ArrayView1<usize>,
@@ -394,19 +401,18 @@ impl DecisionTreeClassifier {
         rng: &mut impl Rng,
     ) -> Node<usize> {
 
-        let n_samples = sorted_idx[0].len();
-        let first_col = &sorted_idx[0];
+        let n_samples = indices.len();
 
         // 1. small node
         if n_samples < self.min_samples_split {
             return Node::Leaf {
-                value: majority(first_col, target, n_classes),
+                value: majority(&indices, target, n_classes),
             };
         }
 
         // 2. pure node
-        let first = target[first_col[0]];
-        if first_col.iter().all(|&i| target[i] == first) {
+        let first = target[indices[0]];
+        if indices.iter().all(|&i| target[i] == first) {
             return Node::Leaf { value: first };
         }
 
@@ -414,14 +420,14 @@ impl DecisionTreeClassifier {
         if let Some(max_d) = self.max_depth {
             if depth >= max_d {
                 return Node::Leaf {
-                    value: majority(first_col, target, n_classes),
+                    value: majority(&indices, target, n_classes),
                 };
             }
         }
 
         // 4. parent impurity
         let mut parent_counts = vec![0usize; n_classes];
-        for &i in first_col {
+        for &i in &indices {
             parent_counts[target[i]] += 1;
         }
 
@@ -430,7 +436,7 @@ impl DecisionTreeClassifier {
         let ctx = SplitContext {
             features,
             target,
-            sorted_idx:       &sorted_idx,
+            indices:          &indices,
             parent_counts:    &parent_counts,
             parent_impurity,
             n_samples,
@@ -439,52 +445,19 @@ impl DecisionTreeClassifier {
             criteria,
         };
 
-        // 5. find best split
-        let result = find_best_split(&ctx, max_features, rng);
+        // 5. find random best split
+        let result = find_random_best_split(&ctx, max_features, rng);
 
         // 6. no valid split found
-        if result.best_ig == 0.0 {
+        if result.best_ig <= 0.0 {
             return Node::Leaf {
-                value: majority(first_col, target, n_classes),
+                value: majority(&indices, target, n_classes),
             };
         }
 
-        // 7. partition — mark left indices using best split
-        let mut mark = vec![false; features.nrows()];
-        for &idx in &sorted_idx[result.best_feature][..=result.best_split_pos] {
-            mark[idx] = true;
-        }
-
-        let left_cap   = result.best_split_pos + 1;
-        let right_cap  = n_samples - left_cap;
-        let n_features = sorted_idx.len();
-
-        let mut left_sorted: Vec<Vec<usize>> = (0..n_features)
-            .map(|_| Vec::with_capacity(left_cap))
-            .collect();
-
-        let mut right_sorted: Vec<Vec<usize>> = (0..n_features)
-            .map(|_| Vec::with_capacity(right_cap))
-            .collect();
-
-        for (f, col) in sorted_idx.iter().enumerate() {
-            for &idx in col {
-                if mark[idx] {
-                    left_sorted[f].push(idx);
-                } else {
-                    right_sorted[f].push(idx);
-                }
-            }
-        }
-
-        // reset mark — avoid reallocation
-        for &idx in &sorted_idx[result.best_feature][..=result.best_split_pos] {
-            mark[idx] = false;
-        }
-
-        // 8. recurse
+        // 7. recurse — partition already done inside find_random_best_split
         let left = self.build_tree(
-            left_sorted,
+            result.left_indices,
             depth + 1,
             features,
             target,
@@ -495,7 +468,7 @@ impl DecisionTreeClassifier {
         );
 
         let right = self.build_tree(
-            right_sorted,
+            result.right_indices,
             depth + 1,
             features,
             target,

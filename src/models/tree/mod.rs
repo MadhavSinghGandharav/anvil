@@ -1,9 +1,11 @@
 mod tree_clf;
 mod tree_reg;
+mod extra_tree_clf;
 mod impurity; 
 
 pub use tree_clf::DecisionTreeClassifier; 
 pub use tree_reg::DecisionTreeRegressor;
+pub use extra_tree_clf::ExtraTreeClassifier;
 
 #[derive(Debug)]
 enum Node<T>{
