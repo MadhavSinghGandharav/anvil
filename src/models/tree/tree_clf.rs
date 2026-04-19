@@ -1,8 +1,7 @@
 use std::cmp::Ordering;
-use rand::Rng;
-use rand::seq::SliceRandom;
+use rand::{Rng,seq::SliceRandom};
 use ndarray::{Array1, ArrayView1, ArrayView2};
-use crate::models::tree::{Criteria, Node, Splitter};
+use crate::models::tree::{Criteria, Node};
 use crate::models::tree::impurity::{entropy, gini};
 use crate::preprocessing::encoder::LabelEncoder;
 
@@ -13,16 +12,12 @@ use crate::preprocessing::encoder::LabelEncoder;
 ///
 /// # Notes
 ///
-/// - Supports `Gini` and `Entropy` criteria criteria
-/// - Supports `Best` and `Random` splitter strategies
+/// - Supports `Gini` and `Entropy` criteria
 /// - Uses presorted indices — O(n log n) once at `fit`, O(n) per node
 pub struct DecisionTreeClassifier {
 
-    /// criteria criterion used for split evaluation
+    /// Impurity criterion used for split evaluation
     criteria: Criteria,
-
-    /// Splitter strategy — best or random
-    splitter: Splitter,
 
     /// Minimum number of samples required to split a node
     min_samples_split: usize,
@@ -33,7 +28,7 @@ pub struct DecisionTreeClassifier {
     /// Maximum depth of the tree
     max_depth: Option<usize>,
 
-    /// Max number features to consider in random feature split
+    /// Max number of features to consider per split
     max_features: Option<usize>,
 
     /// Root node of the fitted tree
@@ -48,7 +43,6 @@ pub struct DecisionTreeClassifier {
 /// Builder for configuring [`DecisionTreeClassifier`]
 pub struct Builder {
     criteria: Criteria,
-    splitter: Splitter,
     min_samples_split: usize,
     min_samples_leaf: usize,
     max_depth: Option<usize>,
@@ -59,14 +53,13 @@ impl Default for Builder {
     /// Default configuration
     ///
     /// - criteria = Gini
-    /// - splitter = Best
     /// - min_samples_split = 2
     /// - min_samples_leaf = 1
     /// - max_depth = None
+    /// - max_features = None (uses all features)
     fn default() -> Self {
         Self {
             criteria: Criteria::Gini,
-            splitter: Splitter::Best,
             min_samples_split: 2,
             min_samples_leaf: 1,
             max_depth: None,
@@ -77,15 +70,9 @@ impl Default for Builder {
 
 impl Builder {
 
-    /// Set criteria criterion
+    /// Set impurity criterion
     pub fn criteria(mut self, criteria: Criteria) -> Self {
         self.criteria = criteria;
-        self
-    }
-
-    /// Set splitter strategy
-    pub fn splitter(mut self, splitter: Splitter) -> Self {
-        self.splitter = splitter;
         self
     }
 
@@ -107,12 +94,11 @@ impl Builder {
         self
     }
 
-    /// Set maximum tree depth
+    /// Set maximum number of features considered per split
     pub fn max_features(mut self, value: usize) -> Self {
         self.max_features = Some(value);
         self
     }
-
 
     /// Build model
     ///
@@ -122,6 +108,8 @@ impl Builder {
     ///
     /// - min_samples_split < 2
     /// - min_samples_leaf < 1
+    /// - max_features < 1
+    /// - criteria is not Gini or Entropy
     pub fn build(self) -> DecisionTreeClassifier {
 
         assert!(
@@ -134,22 +122,20 @@ impl Builder {
             "min_samples_leaf must be >= 1"
         );
 
-        if let Some(max_features) = self.max_features{
+        if let Some(max_features) = self.max_features {
             assert!(
                 max_features >= 1,
                 "max_features must be >= 1"
             );
         }
 
-        match self.criteria{
+        match self.criteria {
             Criteria::Gini | Criteria::Entropy => {},
             _ => panic!("Invalid criterion for classification"),
         }
 
-
         DecisionTreeClassifier {
             criteria: self.criteria,
-            splitter: self.splitter,
             min_samples_split: self.min_samples_split,
             min_samples_leaf: self.min_samples_leaf,
             max_depth: self.max_depth,
@@ -170,7 +156,6 @@ struct SplitContext<'a> {
     n_samples:        usize,
     n_classes:        usize,
     min_samples_leaf: usize,
-    max_features: usize,
     criteria:         fn(&[usize], usize) -> f64,
 }
 
@@ -213,7 +198,7 @@ fn evaluate_feature(ctx: &SplitContext, f: usize) -> (f64, usize, f64) {
 
         // skip if same feature value — not a valid split boundary
         if ctx.features[[curr, f]] == ctx.features[[next, f]] {
-        continue;
+            continue;
         }
 
         let ig = ctx.parent_impurity
@@ -230,17 +215,20 @@ fn evaluate_feature(ctx: &SplitContext, f: usize) -> (f64, usize, f64) {
     (best_ig, best_pos, best_threshold)
 }
 
-/// Finds the best split across all features
-fn find_best_split(ctx: &SplitContext) -> SplitResult {
-
-    let n_features = ctx.sorted_idx.len();
+/// Finds the best split across a randomly shuffled subset of features.
+///
+/// When `max_features == n_features`, all features are evaluated in random order.
+/// When `max_features < n_features`, only a random subset is evaluated.
+fn find_best_split(ctx: &SplitContext, max_features: usize, rng: &mut impl Rng) -> SplitResult {
+    let mut order: Vec<usize> = (0..ctx.sorted_idx.len()).collect();
+    order.shuffle(rng);  // har baar shuffle
 
     let mut best_ig        = 0.0;
     let mut best_feature   = 0;
     let mut best_threshold = 0.0;
     let mut best_split_pos = 0;
 
-    for f in 0..n_features {
+    for &f in order.iter().take(max_features) {
         let (ig, pos, threshold) = evaluate_feature(ctx, f);
         if ig > best_ig {
             best_ig        = ig;
@@ -252,34 +240,6 @@ fn find_best_split(ctx: &SplitContext) -> SplitResult {
 
     SplitResult { best_ig, best_feature, best_threshold, best_split_pos }
 }
-
-/// Finds the best split across a random subset of sqrt(n_features) features
-fn find_random_split(ctx: &SplitContext, rng: &mut impl Rng) -> SplitResult {
-
-    let n_features   = ctx.sorted_idx.len();
-    let max_features = ctx.max_features;
-
-    let mut feature_order: Vec<usize> = (0..n_features).collect();
-    feature_order.shuffle(rng);
-
-    let mut best_ig        = 0.0;
-    let mut best_feature   = 0;
-    let mut best_threshold = 0.0;
-    let mut best_split_pos = 0;
-
-    for &f in feature_order.iter().take(max_features) {
-        let (ig, pos, threshold) = evaluate_feature(ctx, f);
-        if ig > best_ig {
-            best_ig        = ig;
-            best_feature   = f;
-            best_split_pos = pos;
-            best_threshold = threshold;
-        }
-    }
-
-    SplitResult { best_ig, best_feature, best_threshold, best_split_pos }
-}
-
 /// Returns the majority class label among the given indices
 #[inline]
 fn majority(indices: &[usize], target: ArrayView1<usize>, n_classes: usize) -> usize {
@@ -338,13 +298,14 @@ impl DecisionTreeClassifier {
     ///
     /// - features and target size mismatch
     /// - dataset contains zero samples
+    /// - max_features > n_features
     pub fn fit(&mut self, features: ArrayView2<f64>, target: ArrayView1<usize>) {
 
-        
         let n_samples  = features.nrows();
         let n_features = features.ncols();
-        
+
         let max_features = self.max_features.unwrap_or(n_features);
+
         assert!(
             n_samples == target.len(),
             "Number of samples mismatch"
@@ -357,16 +318,16 @@ impl DecisionTreeClassifier {
 
         assert!(
             max_features <= n_features,
-            "Max features cannot be > total features"
+            "max_features cannot be > total features"
         );
 
         // encode class labels into contiguous indices
         let mut encoder = LabelEncoder::new();
         let encoded = encoder.fit_transform(target.as_slice().unwrap());
-        
+
         let n_classes = encoder.classes().len();
         self.classes  = encoder.classes().to_vec();
-        
+
         // precompute sorted indices per feature — O(n log n) once
         let sorted_idx: Vec<Vec<usize>> = (0..n_features)
             .map(|f| {
@@ -380,15 +341,15 @@ impl DecisionTreeClassifier {
             })
             .collect();
 
-        // select criteria function at fit time — no branching in inner loop
+        // select impurity function at fit time — no branching in inner loop
         let impurity_fn: fn(&[usize], usize) -> f64 = match self.criteria {
             Criteria::Entropy => entropy,
             Criteria::Gini    => gini,
-            _ => panic!("Invalid criterion for classification")
-
+            _ => panic!("Invalid criterion for classification"),
         };
 
         let mut rng = rand::rng();
+
         self.root = Some(Box::new(self.build_tree(
             sorted_idx,
             0,
@@ -405,10 +366,7 @@ impl DecisionTreeClassifier {
     ///
     /// # Panics
     ///
-    /// Panics if:
-    ///
-    /// - model not fitted
-    /// - feature dimension mismatch
+    /// Panics if model not fitted
     pub fn predict(&self, features: ArrayView2<f64>) -> Array1<usize> {
 
         let root = self.root.as_ref().expect("Model not fitted");
@@ -416,9 +374,7 @@ impl DecisionTreeClassifier {
         let mut preds = Array1::zeros(features.nrows());
 
         for (i, row) in features.outer_iter().enumerate() {
-            // traverse tree to get encoded class index
             let encoded = traverse(root, row);
-            // map back to original label
             preds[i] = self.classes[encoded];
         }
 
@@ -462,14 +418,14 @@ impl DecisionTreeClassifier {
             }
         }
 
-        // 4. parent criteria
+        // 4. parent impurity
         let mut parent_counts = vec![0usize; n_classes];
         for &i in first_col {
             parent_counts[target[i]] += 1;
         }
 
         let parent_impurity = criteria(&parent_counts, n_samples);
-        
+
         let ctx = SplitContext {
             features,
             target,
@@ -477,17 +433,13 @@ impl DecisionTreeClassifier {
             parent_counts:    &parent_counts,
             parent_impurity,
             n_samples,
-            max_features,
             n_classes,
             min_samples_leaf: self.min_samples_leaf,
             criteria,
         };
 
         // 5. find best split
-        let result = match self.splitter {
-            Splitter::Best   => find_best_split(&ctx),
-            Splitter::Random => find_random_split(&ctx, rng),
-        };
+        let result = find_best_split(&ctx, max_features, rng);
 
         // 6. no valid split found
         if result.best_ig == 0.0 {

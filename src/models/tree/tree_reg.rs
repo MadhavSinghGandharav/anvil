@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use rand::Rng;
 use rand::seq::SliceRandom;
 use ndarray::{Array1, ArrayView1, ArrayView2};
-use crate::models::tree::{Node, Splitter};
+use crate::models::tree::Node;
 
 /// Decision Tree regressor.
 ///
@@ -11,13 +11,9 @@ use crate::models::tree::{Node, Splitter};
 ///
 /// # Notes
 ///
-/// - Supports `Best` and `Random` splitter strategies
 /// - Uses MSE as the split criterion
 /// - Uses presorted indices — O(n log n) once at `fit`, O(n) per node
 pub struct DecisionTreeRegressor {
-
-    /// Splitter strategy — best or random
-    splitter: Splitter,
 
     /// Minimum number of samples required to split a node
     min_samples_split: usize,
@@ -28,7 +24,7 @@ pub struct DecisionTreeRegressor {
     /// Maximum depth of the tree
     max_depth: Option<usize>,
 
-    /// Max number of features to consider in random feature split
+    /// Max number of features to consider per split
     max_features: Option<usize>,
 
     /// Root node of the fitted tree
@@ -37,7 +33,6 @@ pub struct DecisionTreeRegressor {
 
 /// Builder for configuring [`DecisionTreeRegressor`]
 pub struct Builder {
-    splitter: Splitter,
     min_samples_split: usize,
     min_samples_leaf: usize,
     max_depth: Option<usize>,
@@ -47,14 +42,12 @@ pub struct Builder {
 impl Default for Builder {
     /// Default configuration
     ///
-    /// - splitter = Best
     /// - min_samples_split = 2
     /// - min_samples_leaf = 1
     /// - max_depth = None
-    /// - max_features = None
+    /// - max_features = None (uses all features)
     fn default() -> Self {
         Self {
-            splitter: Splitter::Best,
             min_samples_split: 2,
             min_samples_leaf: 1,
             max_depth: None,
@@ -64,12 +57,6 @@ impl Default for Builder {
 }
 
 impl Builder {
-
-    /// Set splitter strategy
-    pub fn splitter(mut self, splitter: Splitter) -> Self {
-        self.splitter = splitter;
-        self
-    }
 
     /// Set minimum samples required to split a node
     pub fn min_samples_split(mut self, value: usize) -> Self {
@@ -89,7 +76,7 @@ impl Builder {
         self
     }
 
-    /// Set maximum number of features to consider at each split
+    /// Set maximum number of features considered per split
     pub fn max_features(mut self, value: usize) -> Self {
         self.max_features = Some(value);
         self
@@ -124,7 +111,6 @@ impl Builder {
         }
 
         DecisionTreeRegressor {
-            splitter: self.splitter,
             min_samples_split: self.min_samples_split,
             min_samples_leaf: self.min_samples_leaf,
             max_depth: self.max_depth,
@@ -163,7 +149,7 @@ fn evaluate_feature(ctx: &SplitContext, f: usize) -> (f64, usize, f64) {
 
     let col = &ctx.sorted_idx[f];
 
-    // initialize right sums from target values
+    // initialize right sums from all target values
     let (mut r_sum, mut r_sumsq) = col.iter().fold((0.0, 0.0), |(s, sq), &i| {
         let v = ctx.target[i];
         (s + v, sq + v * v)
@@ -221,43 +207,21 @@ fn evaluate_feature(ctx: &SplitContext, f: usize) -> (f64, usize, f64) {
     (least_error, best_pos, best_threshold)
 }
 
-/// Finds the best split across all features
-fn find_best_split(ctx: &SplitContext) -> SplitResult {
+/// Finds the best split across a randomly shuffled subset of features.
+///
+/// When `max_features == n_features`, all features are evaluated in random order.
+/// When `max_features < n_features`, only a random subset is evaluated.
+fn find_best_split(ctx: &SplitContext, max_features: usize, rng: &mut impl Rng) -> SplitResult {
 
-    let n_features = ctx.sorted_idx.len();
-
-    let mut least_error    = f64::INFINITY;
-    let mut best_feature   = 0;
-    let mut best_threshold = 0.0;
-    let mut best_split_pos = 0;
-
-    for f in 0..n_features {
-        let (error, pos, threshold) = evaluate_feature(ctx, f);
-        if error < least_error {
-            least_error    = error;
-            best_feature   = f;
-            best_split_pos = pos;
-            best_threshold = threshold;
-        }
-    }
-
-    SplitResult { least_error, best_feature, best_threshold, best_split_pos }
-}
-
-/// Finds the best split across a random subset of features
-fn find_random_split(ctx: &SplitContext, rng: &mut impl Rng, max_features: usize) -> SplitResult {
-
-    let n_features = ctx.sorted_idx.len();
-
-    let mut feature_order: Vec<usize> = (0..n_features).collect();
-    feature_order.shuffle(rng);
+    let mut order: Vec<usize> = (0..ctx.sorted_idx.len()).collect();
+    order.shuffle(rng);
 
     let mut least_error    = f64::INFINITY;
     let mut best_feature   = 0;
     let mut best_threshold = 0.0;
     let mut best_split_pos = 0;
 
-    for &f in feature_order.iter().take(max_features) {
+    for &f in order.iter().take(max_features) {
         let (error, pos, threshold) = evaluate_feature(ctx, f);
         if error < least_error {
             least_error    = error;
@@ -311,6 +275,8 @@ impl DecisionTreeRegressor {
         let n_samples  = features.nrows();
         let n_features = features.ncols();
 
+        let max_features = self.max_features.unwrap_or(n_features);
+
         assert!(
             n_samples == target.len(),
             "Number of samples mismatch"
@@ -321,11 +287,9 @@ impl DecisionTreeRegressor {
             "Cannot fit with zero samples"
         );
 
-        let max_features = self.max_features.unwrap_or(n_features);
-
         assert!(
             max_features <= n_features,
-            "max_features cannot be greater than total features"
+            "max_features cannot be > total features"
         );
 
         // precompute sorted indices per feature — O(n log n) once
@@ -357,9 +321,7 @@ impl DecisionTreeRegressor {
     ///
     /// # Panics
     ///
-    /// Panics if:
-    ///
-    /// - model not fitted
+    /// Panics if model not fitted
     pub fn predict(&self, features: ArrayView2<f64>) -> Array1<f64> {
 
         let root = self.root.as_ref().expect("Model not fitted");
@@ -417,10 +379,7 @@ impl DecisionTreeRegressor {
         };
 
         // 4. find best split
-        let result = match self.splitter {
-            Splitter::Best   => find_best_split(&ctx),
-            Splitter::Random => find_random_split(&ctx, rng, max_features),
-        };
+        let result = find_best_split(&ctx, max_features, rng);
 
         // 5. no valid split found
         if result.least_error == f64::INFINITY {
