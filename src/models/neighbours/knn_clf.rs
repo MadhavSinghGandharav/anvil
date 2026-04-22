@@ -38,15 +38,6 @@ impl Default for Builder<BruteForce<Euclidean>> {
     }
 }
 
-impl KNNClassifier<BruteForce<Euclidean>> {
-    pub fn new() -> Self {
-        Builder::default().build()
-    }
-
-    pub fn builder() -> Builder<BruteForce<Euclidean>> {
-        Builder::default()
-    }
-}
 
 impl<N> Builder<N>
 where
@@ -70,13 +61,32 @@ where
         }
     }
 
-    pub fn build(self) -> KNNClassifier<N> {
-        KNNClassifier {
+    pub fn build(self) -> Result<KNNClassifier<N>,AnvilError> {
+
+        if self.k == 0 {
+            return Err(AnvilError::InvalidParam {
+                param: "k",
+                reason: "must be > 0".into(),
+            });
+        }
+
+        Ok(KNNClassifier {
             k: self.k,
             searcher: self.searcher,
             weights: self.weights,
             targets: None,
-        }
+        })
+    }
+}
+
+
+impl KNNClassifier<BruteForce<Euclidean>> {
+    pub fn new() -> Result<Self,AnvilError> {
+        Builder::default().build()
+    }
+
+    pub fn builder() -> Builder<BruteForce<Euclidean>> {
+        Builder::default()
     }
 }
 

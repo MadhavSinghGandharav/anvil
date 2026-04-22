@@ -36,15 +36,7 @@ impl Default for Builder<BruteForce<Euclidean>> {
     }
 }
 
-impl KNNRegressor<BruteForce<Euclidean>> {
-    pub fn new() -> Self {
-        Builder::default().build()
-    }
 
-    pub fn builder() -> Builder<BruteForce<Euclidean>> {
-        Builder::default()
-    }
-}
 
 impl<N> Builder<N>
 where
@@ -68,13 +60,31 @@ where
         }
     }
 
-    pub fn build(self) -> KNNRegressor<N> {
-        KNNRegressor {
+    pub fn build(self) -> Result<KNNRegressor<N>,AnvilError> {
+        
+        if self.k == 0 {
+            return Err(AnvilError::InvalidParam {
+                param: "k",
+                reason: "must be > 0".into(),
+            });
+        }
+
+        Ok(KNNRegressor {
             k: self.k,
             searcher: self.searcher,
             weights: self.weights,
             targets: None,
-        }
+        })
+    }
+}
+
+impl KNNRegressor<BruteForce<Euclidean>> {
+    pub fn new() -> Result<Self,AnvilError> {
+        Builder::default().build()
+    }
+
+    pub fn builder() -> Builder<BruteForce<Euclidean>> {
+        Builder::default()
     }
 }
 
