@@ -1,9 +1,13 @@
 use std::cmp::Ordering;
-use rand::{Rng,seq::SliceRandom};
+use rand::{Rng, seq::SliceRandom};
 use ndarray::{Array1, ArrayView1, ArrayView2};
-use crate::models::tree::{Criteria, Node};
-use crate::models::tree::impurity::{entropy, gini};
-use crate::preprocessing::encoder::LabelEncoder;
+
+use crate::{
+    core::{Estimator, Classifier, AnvilError, Transformer},
+    models::tree::{Criteria, Node},
+    models::tree::impurity::{entropy, gini},
+    preprocessing::encoder::LabelEncoder,
+};
 
 /// Decision Tree classifier.
 ///
@@ -15,7 +19,6 @@ use crate::preprocessing::encoder::LabelEncoder;
 /// - Supports `Gini` and `Entropy` criteria
 /// - Uses presorted indices — O(n log n) once at `fit`, O(n) per node
 pub struct DecisionTreeClassifier {
-
     /// Impurity criterion used for split evaluation
     criteria: Criteria,
 
@@ -69,7 +72,6 @@ impl Default for Builder {
 }
 
 impl Builder {
-
     /// Set impurity criterion
     pub fn criteria(mut self, criteria: Criteria) -> Self {
         self.criteria = criteria;
@@ -102,39 +104,49 @@ impl Builder {
 
     /// Build model
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if:
+    /// Returns `AnvilError::InvalidParam` if:
     ///
-    /// - min_samples_split < 2
-    /// - min_samples_leaf < 1
-    /// - max_features < 1
-    /// - criteria is not Gini or Entropy
-    pub fn build(self) -> DecisionTreeClassifier {
+    /// - `min_samples_split` < 2
+    /// - `min_samples_leaf` < 1
+    /// - `max_features` < 1
+    /// - `criteria` is not `Gini` or `Entropy`
+    pub fn build(self) -> Result<DecisionTreeClassifier, AnvilError> {
+        if self.min_samples_split < 2 {
+            return Err(AnvilError::InvalidParam {
+                param: "min_samples_split",
+                reason: "must be >= 2".into(),
+            });
+        }
 
-        assert!(
-            self.min_samples_split >= 2,
-            "min_samples_split must be >= 2"
-        );
-
-        assert!(
-            self.min_samples_leaf >= 1,
-            "min_samples_leaf must be >= 1"
-        );
+        if self.min_samples_leaf < 1 {
+            return Err(AnvilError::InvalidParam {
+                param: "min_samples_leaf",
+                reason: "must be >= 1".into(),
+            });
+        }
 
         if let Some(max_features) = self.max_features {
-            assert!(
-                max_features >= 1,
-                "max_features must be >= 1"
-            );
+            if max_features < 1 {
+                return Err(AnvilError::InvalidParam {
+                    param: "max_features",
+                    reason: "must be >= 1".into(),
+                });
+            }
         }
 
         match self.criteria {
-            Criteria::Gini | Criteria::Entropy => {},
-            _ => panic!("Invalid criterion for classification"),
+            Criteria::Gini | Criteria::Entropy => {}
+            _ => {
+                return Err(AnvilError::InvalidParam {
+                    param: "criteria",
+                    reason: "DecisionTreeClassifier only supports Gini or Entropy".into(),
+                });
+            }
         }
 
-        DecisionTreeClassifier {
+        Ok(DecisionTreeClassifier {
             criteria: self.criteria,
             min_samples_split: self.min_samples_split,
             min_samples_leaf: self.min_samples_leaf,
@@ -142,27 +154,27 @@ impl Builder {
             max_features: self.max_features,
             root: None,
             classes: Vec::new(),
-        }
+        })
     }
 }
 
 /// Shared context passed to split finding functions
 struct SplitContext<'a> {
-    features:         ArrayView2<'a, f64>,
-    target:           ArrayView1<'a, usize>,
-    sorted_idx:       &'a [Vec<usize>],
-    parent_counts:    &'a [usize],
-    parent_impurity:  f64,
-    n_samples:        usize,
-    n_classes:        usize,
+    features: ArrayView2<'a, f64>,
+    target: ArrayView1<'a, usize>,
+    sorted_idx: &'a [Vec<usize>],
+    parent_counts: &'a [usize],
+    parent_impurity: f64,
+    n_samples: usize,
+    n_classes: usize,
     min_samples_leaf: usize,
-    criteria:         fn(&[usize], usize) -> f64,
+    criteria: fn(&[usize], usize) -> f64,
 }
 
 /// Result of a split search
 struct SplitResult {
-    best_ig:        f64,
-    best_feature:   usize,
+    best_ig: f64,
+    best_feature: usize,
     best_threshold: f64,
     best_split_pos: usize,
 }
@@ -170,29 +182,26 @@ struct SplitResult {
 /// Evaluates all split candidates for a single feature
 #[inline]
 fn evaluate_feature(ctx: &SplitContext, f: usize) -> (f64, usize, f64) {
-
     let col = &ctx.sorted_idx[f];
 
-    let mut left_counts  = vec![0usize; ctx.n_classes];
+    let mut left_counts = vec![0usize; ctx.n_classes];
     let mut right_counts = ctx.parent_counts.to_vec();
 
-    let mut best_ig        = 0.0;
-    let mut best_pos       = 0;
+    let mut best_ig = 0.0;
+    let mut best_pos = 0;
     let mut best_threshold = 0.0;
 
     for j in 0..col.len() - 1 {
-
         let curr = col[j];
         let next = col[j + 1];
 
-        left_counts[ctx.target[curr]]  += 1;
+        left_counts[ctx.target[curr]] += 1;
         right_counts[ctx.target[curr]] -= 1;
 
-        let left_size  = j + 1;
+        let left_size = j + 1;
         let right_size = ctx.n_samples - left_size;
 
-        if left_size  < ctx.min_samples_leaf
-        || right_size < ctx.min_samples_leaf {
+        if left_size < ctx.min_samples_leaf || right_size < ctx.min_samples_leaf {
             continue;
         }
 
@@ -202,13 +211,16 @@ fn evaluate_feature(ctx: &SplitContext, f: usize) -> (f64, usize, f64) {
         }
 
         let ig = ctx.parent_impurity
-            - (left_size  as f64 / ctx.n_samples as f64) * (ctx.criteria)(&left_counts,  left_size)
-            - (right_size as f64 / ctx.n_samples as f64) * (ctx.criteria)(&right_counts, right_size);
+            - (left_size as f64 / ctx.n_samples as f64)
+                * (ctx.criteria)(&left_counts, left_size)
+            - (right_size as f64 / ctx.n_samples as f64)
+                * (ctx.criteria)(&right_counts, right_size);
 
         if ig > best_ig {
-            best_ig        = ig;
-            best_pos       = j;
-            best_threshold = (ctx.features[[curr, f]] + ctx.features[[next, f]]) / 2.0;
+            best_ig = ig;
+            best_pos = j;
+            best_threshold =
+                (ctx.features[[curr, f]] + ctx.features[[next, f]]) / 2.0;
         }
     }
 
@@ -219,32 +231,40 @@ fn evaluate_feature(ctx: &SplitContext, f: usize) -> (f64, usize, f64) {
 ///
 /// When `max_features == n_features`, all features are evaluated in random order.
 /// When `max_features < n_features`, only a random subset is evaluated.
-
-fn find_best_split(ctx: &SplitContext, max_features: usize, rng: &mut impl Rng) -> SplitResult {
+fn find_best_split(
+    ctx: &SplitContext,
+    max_features: usize,
+    rng: &mut impl Rng,
+) -> SplitResult {
     let mut order: Vec<usize> = (0..ctx.sorted_idx.len()).collect();
-    order.shuffle(rng);  // har baar shuffle
+    order.shuffle(rng);
 
-    let mut best_ig        = 0.0;
-    let mut best_feature   = 0;
+    let mut best_ig = 0.0;
+    let mut best_feature = 0;
     let mut best_threshold = 0.0;
     let mut best_split_pos = 0;
 
     for &f in order.iter().take(max_features) {
         let (ig, pos, threshold) = evaluate_feature(ctx, f);
         if ig > best_ig {
-            best_ig        = ig;
-            best_feature   = f;
+            best_ig = ig;
+            best_feature = f;
             best_split_pos = pos;
             best_threshold = threshold;
         }
     }
 
-    SplitResult { best_ig, best_feature, best_threshold, best_split_pos }
+    SplitResult {
+        best_ig,
+        best_feature,
+        best_threshold,
+        best_split_pos,
+    }
 }
+
 /// Returns the majority class label among the given indices
 #[inline]
 fn majority(indices: &[usize], target: ArrayView1<usize>, n_classes: usize) -> usize {
-
     let mut counts = vec![0usize; n_classes];
 
     for &i in indices {
@@ -264,7 +284,12 @@ fn majority(indices: &[usize], target: ArrayView1<usize>, n_classes: usize) -> u
 fn traverse(node: &Node<usize>, row: ArrayView1<f64>) -> usize {
     match node {
         Node::Leaf { value } => *value,
-        Node::Internal { feature, threshold, left, right } => {
+        Node::Internal {
+            feature,
+            threshold,
+            left,
+            right,
+        } => {
             if row[*feature] <= *threshold {
                 traverse(left, row)
             } else {
@@ -275,9 +300,12 @@ fn traverse(node: &Node<usize>, row: ArrayView1<f64>) -> usize {
 }
 
 impl DecisionTreeClassifier {
-
     /// Create model with default configuration
-    pub fn new() -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns `AnvilError::InvalidParam` if default builder validation fails
+    pub fn new() -> Result<Self, AnvilError> {
         Builder::default().build()
     }
 
@@ -290,44 +318,53 @@ impl DecisionTreeClassifier {
     pub fn classes(&self) -> &[usize] {
         &self.classes
     }
+}
 
+impl Estimator<usize> for DecisionTreeClassifier {
     /// Fits the decision tree classifier
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if:
-    ///
-    /// - features and target size mismatch
-    /// - dataset contains zero samples
-    /// - max_features > n_features
-    pub fn fit(&mut self, features: ArrayView2<f64>, target: ArrayView1<usize>) {
-
-        let n_samples  = features.nrows();
+    /// - `DimensionMismatch` if `features` and `target` row count differ
+    /// - `InvalidParam` if dataset contains zero samples
+    /// - `InvalidParam` if `max_features` > `n_features`
+    fn fit(
+        &mut self,
+        features: ArrayView2<f64>,
+        target: ArrayView1<usize>,
+    ) -> Result<(), AnvilError> {
+        let n_samples = features.nrows();
         let n_features = features.ncols();
 
         let max_features = self.max_features.unwrap_or(n_features);
 
-        assert!(
-            n_samples == target.len(),
-            "Number of samples mismatch"
-        );
+        if n_samples != target.len() {
+            return Err(AnvilError::DimensionMismatch {
+                x_samples: n_samples,
+                y_samples: target.len(),
+            });
+        }
 
-        assert!(
-            n_samples > 0,
-            "Cannot fit with zero samples"
-        );
+        if n_samples == 0 {
+            return Err(AnvilError::InvalidParam {
+                param: "features",
+                reason: "cannot fit with zero samples".into(),
+            });
+        }
 
-        assert!(
-            max_features <= n_features,
-            "max_features cannot be > total features"
-        );
+        if max_features > n_features {
+            return Err(AnvilError::InvalidParam {
+                param: "max_features",
+                reason: "cannot be greater than total number of features".into(),
+            });
+        }
 
         // encode class labels into contiguous indices
         let mut encoder = LabelEncoder::new();
-        let encoded = encoder.fit_transform(target.as_slice().unwrap());
+        let encoded = encoder.fit_transform(target)?;
 
-        let n_classes = encoder.classes().len();
-        self.classes  = encoder.classes().to_vec();
+        let n_classes = encoder.classes()?.len();
+        self.classes = encoder.classes()?.to_vec();
 
         // precompute sorted indices per feature — O(n log n) once
         let sorted_idx: Vec<Vec<usize>> = (0..n_features)
@@ -345,8 +382,13 @@ impl DecisionTreeClassifier {
         // select impurity function at fit time — no branching in inner loop
         let impurity_fn: fn(&[usize], usize) -> f64 = match self.criteria {
             Criteria::Entropy => entropy,
-            Criteria::Gini    => gini,
-            _ => panic!("Invalid criterion for classification"),
+            Criteria::Gini => gini,
+            _ => {
+                return Err(AnvilError::InvalidParam {
+                    param: "criteria",
+                    reason: "only Gini or Entropy supported for classification".into(),
+                });
+            }
         };
 
         let mut rng = rand::rng();
@@ -361,16 +403,20 @@ impl DecisionTreeClassifier {
             impurity_fn,
             &mut rng,
         )));
-    }
 
+        Ok(())
+    }
+}
+
+impl Classifier for DecisionTreeClassifier {
     /// Predict target labels
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if model not fitted
-    pub fn predict(&self, features: ArrayView2<f64>) -> Array1<usize> {
-
-        let root = self.root.as_ref().expect("Model not fitted");
+    /// - `NotFitted` if model has not been trained
+    /// - `ShapeMismatch` if feature count does not match training data
+    fn predict(&self, features: ArrayView2<f64>) -> Result<Array1<usize>, AnvilError> {
+        let root = self.root.as_ref().ok_or(AnvilError::NotFitted)?;
 
         let mut preds = Array1::zeros(features.nrows());
 
@@ -379,9 +425,11 @@ impl DecisionTreeClassifier {
             preds[i] = self.classes[encoded];
         }
 
-        preds
+        Ok(preds)
     }
+}
 
+impl DecisionTreeClassifier {
     fn build_tree(
         &self,
         sorted_idx: Vec<Vec<usize>>,
@@ -393,7 +441,6 @@ impl DecisionTreeClassifier {
         criteria: fn(&[usize], usize) -> f64,
         rng: &mut impl Rng,
     ) -> Node<usize> {
-
         let n_samples = sorted_idx[0].len();
         let first_col = &sorted_idx[0];
 
@@ -430,8 +477,8 @@ impl DecisionTreeClassifier {
         let ctx = SplitContext {
             features,
             target,
-            sorted_idx:       &sorted_idx,
-            parent_counts:    &parent_counts,
+            sorted_idx: &sorted_idx,
+            parent_counts: &parent_counts,
             parent_impurity,
             n_samples,
             n_classes,
@@ -455,8 +502,8 @@ impl DecisionTreeClassifier {
             mark[idx] = true;
         }
 
-        let left_cap   = result.best_split_pos + 1;
-        let right_cap  = n_samples - left_cap;
+        let left_cap = result.best_split_pos + 1;
+        let right_cap = n_samples - left_cap;
         let n_features = sorted_idx.len();
 
         let mut left_sorted: Vec<Vec<usize>> = (0..n_features)
@@ -506,10 +553,10 @@ impl DecisionTreeClassifier {
         );
 
         Node::Internal {
-            feature:   result.best_feature,
+            feature: result.best_feature,
             threshold: result.best_threshold,
-            left:      Box::new(left),
-            right:     Box::new(right),
+            left: Box::new(left),
+            right: Box::new(right),
         }
     }
 }

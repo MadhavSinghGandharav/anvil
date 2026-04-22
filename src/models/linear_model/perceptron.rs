@@ -64,7 +64,6 @@ impl Builder {
     ///
     /// Panics if `batch_size` is 0.
     pub fn batch_size(mut self, batch_size: usize) -> Self {
-        assert!(batch_size > 0, "batch_size must be greater than 0");
         self.batch_size = batch_size;
         self
     }
@@ -76,20 +75,35 @@ impl Builder {
     }
 
     /// Consumes the builder and returns a configured [`Perceptron`] instance.
-    pub fn build(self) -> Perceptron {
-        Perceptron {
+    pub fn build(self) -> Result<Perceptron, AnvilError> {
+
+        if self.batch_size == 0 {
+            return Err(AnvilError::InvalidParam {
+                param: "batch_size",
+                reason: "must be > 0".into()
+            });
+        }
+
+        if self.epochs == 0 {
+            return Err(AnvilError::InvalidParam {
+                param: "epochs",
+                reason: "must be > 0".into()
+            });
+        }
+
+        Ok(Perceptron {
             params: None,
             epochs: self.epochs,
             batch_size: self.batch_size,
             optimizer: self.optimizer,
             classes: [0; 2],
-        }
+        })
     }
 }
 
 impl Perceptron {
     /// Returns a new instance of [`Perceptron`] with default settings.
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, AnvilError> {
         Self::builder().build()
     }
 

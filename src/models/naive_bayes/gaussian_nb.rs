@@ -43,8 +43,47 @@ impl Builder {
         self
     }
 
-    pub fn build(self) -> GaussianNB {
-        GaussianNB {
+    pub fn build(self) -> Result<GaussianNB, AnvilError> {
+
+        if self.var_smoothing <= 0.0 {
+            return Err(AnvilError::InvalidParam {
+                param: "var_smoothing",
+                reason: "must be > 0".into(),
+            });
+        }
+
+        if let Some(ref probs) = self.class_prob {
+
+            if probs.is_empty() {
+                return Err(AnvilError::InvalidParam {
+                    param: "class_prob",
+                    reason: "cannot be empty".into(),
+                });
+            }
+
+            let mut sum = 0.0;
+
+            for &p in probs {
+                // check finite + non-negative
+                if !p.is_finite() || p < 0.0 {
+                    return Err(AnvilError::InvalidParam {
+                        param: "class_prob",
+                        reason: "must contain finite, non-negative values".into(),
+                    });
+                }
+
+                sum += p;
+            }
+
+            if sum <= 0.0 {
+                return Err(AnvilError::InvalidParam {
+                    param: "class_prob",
+                    reason: "sum must be > 0".into(),
+                });
+            }
+        }
+
+        Ok(GaussianNB {
             mean: None,
             log_gauss_const: None,
             inv_var: None,
@@ -52,12 +91,12 @@ impl Builder {
             class_prob: self.class_prob,
             classes: Vec::new(),
             var_smoothing: self.var_smoothing,
-        }
+        })
     }
 }
 
 impl GaussianNB {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, AnvilError> {
         Builder::default().build()
     }
 

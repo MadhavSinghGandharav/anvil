@@ -29,6 +29,7 @@ impl Default for Builder {
 }
 
 impl Builder {
+
     pub fn probability(mut self, class_prob: Vec<f64>) -> Self {
         self.class_prob = Some(class_prob);
         self
@@ -39,20 +40,60 @@ impl Builder {
         self
     }
 
-    pub fn build(self) -> BernoulliNB {
-        BernoulliNB {
+    pub fn build(self) -> Result<BernoulliNB, AnvilError> {
+
+        // threshold check
+        if !self.threshold.is_finite() {
+            return Err(AnvilError::InvalidParam {
+                param: "threshold",
+                reason: "must be finite".into(),
+            });
+        }
+
+        // class_prob validation (single pass)
+        if let Some(ref probs) = self.class_prob {
+
+            if probs.is_empty() {
+                return Err(AnvilError::InvalidParam {
+                    param: "class_prob",
+                    reason: "cannot be empty".into(),
+                });
+            }
+
+            let mut sum = 0.0;
+
+            for &p in probs {
+                if !(p >= 0.0 && p.is_finite()) {
+                    return Err(AnvilError::InvalidParam {
+                        param: "class_prob",
+                        reason: "must contain finite, non-negative values".into(),
+                    });
+                }
+
+                sum += p;
+            }
+
+            if sum <= 0.0 {
+                return Err(AnvilError::InvalidParam {
+                    param: "class_prob",
+                    reason: "sum must be > 0".into(),
+                });
+            }
+        }
+
+        Ok(BernoulliNB {
             log_prob: None,
             log_prob_neg: None,
             class_log_prior: None,
             class_prob: self.class_prob,
             classes: Vec::new(),
             threshold: self.threshold,
-        }
+        })
     }
 }
 
 impl BernoulliNB {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, AnvilError> {
         Builder::default().build()
     }
 

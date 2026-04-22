@@ -49,7 +49,6 @@ impl Builder {
     /// # Errors
     /// Returns error if batch_size == 0 (validated at fit time)
     pub fn batch_size(mut self, batch_size: usize) -> Self {
-        assert!(batch_size > 0, "batch_size must be greater than 0");
         self.batch_size = batch_size;
         self
     }
@@ -59,18 +58,33 @@ impl Builder {
         self
     }
 
-    pub fn build(self) -> LogisticRegression {
-        LogisticRegression {
+    pub fn build(self) -> Result<LogisticRegression, AnvilError> {
+
+        if self.batch_size == 0 {
+            return Err(AnvilError::InvalidParam {
+                param: "batch_size",
+                reason: "must be > 0".into()
+            });
+        }
+
+        if self.epochs == 0 {
+            return Err(AnvilError::InvalidParam {
+                param: "epochs",
+                reason: "must be > 0".into()
+            });
+        }
+
+        Ok(LogisticRegression {
             params: None,
             epochs: self.epochs,
             batch_size: self.batch_size,
             optimizer: self.optimizer,
             classes: [0; 2],
-        }
+        })
     }
 }
 
-/// Numerically stable sigmoid
+/// Numerically stable sigmivate, no user-facing invariants to check there) — all validation is front-loaded in fit.oid
 #[inline]
 fn sigmoid(z: f64) -> f64 {
     if z >= 0.0 {
@@ -83,7 +97,7 @@ fn sigmoid(z: f64) -> f64 {
 }
 
 impl LogisticRegression {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self,AnvilError> {
         Self::builder().build()
     }
 

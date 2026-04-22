@@ -65,7 +65,6 @@ impl Builder {
     ///
     /// Panics if `batch_size` is 0.
     pub fn batch_size(mut self, batch_size: usize) -> Self {
-        assert!(batch_size > 0, "batch_size must be greater than 0");
         self.batch_size = batch_size;
         self
     }
@@ -77,19 +76,35 @@ impl Builder {
     }
 
     /// Consumes the builder and returns a configured [`SGDRegressor`].
-    pub fn build(self) -> SGDRegressor {
-        SGDRegressor {
+    pub fn build(self) -> Result<SGDRegressor,AnvilError> {
+                
+        if self.batch_size == 0 {
+            return Err(AnvilError::InvalidParam {
+                param: "batch_size",
+                reason: "must be > 0".into()
+            });
+        }
+
+        if self.epochs == 0 {
+            return Err(AnvilError::InvalidParam {
+                param: "epochs",
+                reason: "must be > 0".into()
+            });
+        }
+
+
+        Ok(SGDRegressor {
             params: None,
             epochs: self.epochs,
             batch_size: self.batch_size,
             optimizer: self.optimizer,
-        }
+        })
     }
 }
 
 impl SGDRegressor {
     /// Returns a new [`SGDRegressor`] with default settings.
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, AnvilError> {
         Self::builder().build()
     }
 
