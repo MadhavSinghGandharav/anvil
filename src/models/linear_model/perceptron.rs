@@ -1,52 +1,40 @@
+//! Perceptron module for binary classification.
+//!
+//! This module provides an implementation of the classic Perceptron algorithm,
+//! a fundamental linear classifier that updates its weights based on misclassified samples.
+
 use crate::{
     optim::{Optimizer, SGD},
     preprocessing::encoder::LabelEncoder,
+    core::{Estimator, Classifier, AnvilError},
 };
 use ndarray::{Array1, ArrayView1, ArrayView2, s};
 use rand::seq::SliceRandom;
 
-/// Linear binary classifier trained using the **Perceptron algorithm**.
+/// A Perceptron classifier for binary classification.
 ///
-/// The perceptron learns a **linear decision boundary** of the form:
+/// The Perceptron learns a linear decision boundary by iteratively adjusting 
+/// weights whenever a training instance is misclassified ($y \cdot f(x) \le 0$).
 ///
-/// f(x) = wᵀx + b
+/// # Examples
 ///
-/// A prediction is made using the sign of the decision function.
+/// ```
+/// use anvil::models::Perceptron;
 ///
-/// # Training Rule
-///
-/// For each sample `(x, y)` where `y ∈ {-1, 1}`:
-///
-/// if y * (wᵀx + b) ≤ 0:
-///     w ← w + η y x
-///     b ← b + η y
-///
-/// where `η` is the learning rate.
-///
-/// # Notes
-///
-/// - Supports **binary classification only**
-/// - Target labels are internally converted to `{-1,1}`
-/// - Uses mini-batch stochastic subgradient descent
+/// let model = Perceptron::builder()
+///     .epochs(100)
+///     .batch_size(1) // Traditional online learning
+///     .build();
+/// ```
 pub struct Perceptron {
-
-    /// Learned parameters `[bias, weights...]`
     params: Option<Array1<f64>>,
-
-    /// Number of training epochs
     epochs: usize,
-
-    /// Mini-batch size
     batch_size: usize,
-
-    /// Optimizer used for parameter updates
     optimizer: Box<dyn Optimizer>,
-
-    /// Original class labels
     classes: [usize; 2],
 }
 
-/// Builder for configuring [`Perceptron`]
+/// A builder pattern implementation for configuring a [`Perceptron`] model.
 pub struct Builder {
     epochs: usize,
     batch_size: usize,
@@ -54,11 +42,6 @@ pub struct Builder {
 }
 
 impl Default for Builder {
-    /// Default configuration
-    ///
-    /// - epochs = 100
-    /// - batch_size = 1
-    /// - optimizer = SGD(1.0)
     fn default() -> Self {
         Self {
             epochs: 100,
@@ -69,27 +52,30 @@ impl Default for Builder {
 }
 
 impl Builder {
-
-    /// Set number of epochs
+    /// Sets the number of training iterations (epochs) over the entire dataset.
     pub fn epochs(mut self, epochs: usize) -> Self {
         self.epochs = epochs;
         self
     }
 
-    /// Set mini-batch size
+    /// Sets the batch size for weight updates.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `batch_size` is 0.
     pub fn batch_size(mut self, batch_size: usize) -> Self {
         assert!(batch_size > 0, "batch_size must be greater than 0");
         self.batch_size = batch_size;
         self
     }
 
-    /// Set optimizer
+    /// Sets the optimizer to be used during the fitting process.
     pub fn optimizer<O: Optimizer + 'static>(mut self, optimizer: O) -> Self {
         self.optimizer = Box::new(optimizer);
         self
     }
 
-    /// Build model
+    /// Consumes the builder and returns a configured [`Perceptron`] instance.
     pub fn build(self) -> Perceptron {
         Perceptron {
             params: None,
@@ -102,99 +88,78 @@ impl Builder {
 }
 
 impl Perceptron {
-
-    /// Create model with default configuration
+    /// Returns a new instance of [`Perceptron`] with default settings.
     pub fn new() -> Self {
         Self::builder().build()
     }
 
-    /// Returns builder
+    /// Returns a [`Builder`] to configure the model.
     pub fn builder() -> Builder {
         Builder::default()
     }
 
-    /// Returns learned weights
+    /// Encodes target labels into numeric values $\{-1.0, 1.0\}$.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if model is not fitted
-    pub fn weights(&self) -> ArrayView1<'_, f64> {
-        let params = self.params.as_ref().expect("Model not fitted");
-        params.slice(s![1..])
-    }
-
-    /// Returns learned bias
-    ///
-    /// # Panics
-    ///
-    /// Panics if model is not fitted
-    pub fn bias(&self) -> f64 {
-        self.params.as_ref().expect("Model not fitted")[0]
-    }
-
-    /// Returns the two original class labels in ascending order
-    ///
-    /// # Panics
-    ///
-    /// Panics if model is not fitted
-    pub fn classes(&self) -> &[usize; 2] {
-        &self.classes
-    }
-
-    /// Encodes `target` labels as `{-1, 1}` and stores the original classes
-    fn update_target(&mut self, target: &[usize]) -> Vec<f64> {
-
+    /// Returns `AnvilError::InvalidParam` if more or fewer than 2 classes are detected.
+    fn update_target(&mut self, target: &[usize]) -> Result<Vec<f64>, AnvilError> {
         let mut encoder = LabelEncoder::new();
         let encoded = encoder.fit_transform(target);
 
-        assert_eq!(
-            encoder.classes().len(),
-            2,
-            "Perceptron supports only binary classification"
-        );
+        if encoder.classes().len() != 2 {
+            return Err(AnvilError::InvalidParam {
+                param: "y",
+                reason: "Perceptron supports only binary classification".into(),
+            });
+        }
 
         self.classes = [encoder.classes()[0], encoder.classes()[1]];
 
-        encoded
-            .into_iter()
-            .map(|i| if i == 0 { -1.0 } else { 1.0 })
-            .collect()
+        Ok(
+            encoded
+                .into_iter()
+                .map(|i| if i == 0 { -1.0 } else { 1.0 })
+                .collect()
+        )
     }
+}
 
-    /// Fits the model using mini-batch stochastic subgradient descent
+impl Estimator<usize> for Perceptron {
+    /// Trains the Perceptron model on the provided dataset.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if:
-    ///
-    /// - features and target size mismatch
-    /// - target does not contain exactly 2 distinct classes
-    /// - batch_size == 0
-    pub fn fit(&mut self, features: ArrayView2<f64>, target: ArrayView1<usize>) {
+    /// * `AnvilError::DimensionMismatch`: If `x` and `y` have different sample counts.
+    /// * `AnvilError::InvalidParam`: If `y` is not contiguous or `batch_size` is 0.
+    fn fit(
+        &mut self,
+        x: ArrayView2<f64>,
+        y: ArrayView1<usize>,
+    ) -> Result<(), AnvilError> {
 
-        let n_samples = features.nrows();
-        let n_features = features.ncols();
+        let n_samples = x.nrows();
+        let n_features = x.ncols();
 
-        assert_eq!(
-            n_samples,
-            target.len(),
-            "Number of samples and target values must match"
-        );
+        if n_samples != y.len() {
+            return Err(AnvilError::DimensionMismatch {
+                x_samples: n_samples,
+                y_samples: y.len(),
+            });
+        }
 
-        assert!(
-            self.batch_size > 0,
-            "batch_size must be greater than 0"
-        );
+        let y_slice = y.as_slice().ok_or(AnvilError::InvalidParam {
+            param: "y",
+            reason: "not contiguous".into(),
+        })?;
 
-        // initialize parameters [bias, weights...]
+        let target = self.update_target(y_slice)?;
+
         let mut params = Array1::<f64>::zeros(n_features + 1);
+        let mut gradient = Array1::<f64>::zeros(n_features + 1);
 
         let mut rng = rand::rng();
         let mut indices: Vec<usize> = (0..n_samples).collect();
-
-        let target = self.update_target(target.as_slice().unwrap());
-
-        let mut gradient = Array1::<f64>::zeros(n_features + 1);
 
         for _ in 0..self.epochs {
 
@@ -204,7 +169,6 @@ impl Perceptron {
 
                 gradient.fill(0.0);
 
-                // slice once per batch
                 let weights = params.slice(s![1..]);
                 let bias = params[0];
 
@@ -213,67 +177,74 @@ impl Perceptron {
 
                 for &idx in batch {
 
-                    let row = features.row(idx);
+                    let row = x.row(idx);
 
-                    // prediction
                     let y = target[idx];
-                    let y_pred = row.dot(&weights) + bias;
+                    let fx = row.dot(&weights) + bias;
 
-                    // subgradient: update only on misclassified samples
-                    if y * y_pred <= 0.0 {
-
-                        // bias gradient
+                    // Perceptron update rule: update if misclassified
+                    if y * fx <= 0.0 {
                         grad_b -= y;
 
-                        // weight gradients
-                        for (g, &x) in grad_w.iter_mut().zip(row.iter()) {
-                            *g -= y * x;
+                        for (g, &val) in grad_w.iter_mut().zip(row.iter()) {
+                            *g -= y * val;
                         }
                     }
                 }
 
                 gradient[0] = grad_b;
+                gradient *= 1.0 / batch.len() as f64;
 
-                // average gradient
-                let inv_bs = 1.0 / batch.len() as f64;
-                gradient *= inv_bs;
-
-                self.optimizer
-                    .step(params.as_slice_mut().unwrap(), gradient.as_slice().unwrap());
+                self.optimizer.step(
+                    params.as_slice_mut().unwrap(),
+                    gradient.as_slice().unwrap(),
+                );
             }
         }
 
         self.params = Some(params);
+
+        Ok(())
     }
+}
 
-    /// Predict target labels
+impl Classifier for Perceptron {
+    /// Predicts class labels for a set of samples.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if:
-    ///
-    /// - model not fitted
-    /// - feature dimension mismatch
-    pub fn predict(&self, features: ArrayView2<f64>) -> Array1<usize> {
+    /// * `AnvilError::NotFitted`: If called before `fit`.
+    /// * `AnvilError::ShapeMismatch`: If the number of features in `x` differs from the training data.
+    fn predict(
+        &self,
+        x: ArrayView2<f64>,
+    ) -> Result<Array1<usize>, AnvilError> {
 
-        let params = self.params.as_ref().expect("Model not fitted");
+        let params = self.params.as_ref().ok_or(AnvilError::NotFitted)?;
 
         let weights = params.slice(s![1..]);
         let bias = params[0];
 
-        assert!(
-            weights.len() == features.ncols(),
-            "Feature dimension mismatch"
-        );
-
-        let mut preds = Array1::zeros(features.nrows());
-
-        for (i, row) in features.outer_iter().enumerate() {
-            // sign of decision function determines class
-            let fx = row.dot(&weights) + bias;
-            preds[i] = if fx >= 0.0 { self.classes[1] } else { self.classes[0] };
+        if weights.len() != x.ncols() {
+            return Err(AnvilError::ShapeMismatch {
+                expected: weights.len(),
+                got: x.ncols(),
+                axis: "features",
+            });
         }
 
-        preds
+        let mut preds = Array1::zeros(x.nrows());
+
+        for (i, row) in x.outer_iter().enumerate() {
+            let fx = row.dot(&weights) + bias;
+
+            preds[i] = if fx >= 0.0 {
+                self.classes[1]
+            } else {
+                self.classes[0]
+            };
+        }
+
+        Ok(preds)
     }
 }
