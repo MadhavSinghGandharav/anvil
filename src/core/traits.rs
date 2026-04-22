@@ -1,4 +1,4 @@
-use ndarray::{Array1, Array2, ArrayView1, ArrayView2};
+use ndarray::{Array1, ArrayView1, ArrayView2};
 use crate::core::AnvilError;
 
 /// Base trait for supervised models
@@ -16,13 +16,14 @@ pub trait Classifier: Estimator<usize> {
     fn predict(&self, x: ArrayView2<f64>) -> Result<Array1<usize>, AnvilError>;
 }
 
-/// Transformers (scalers, PCA, etc.)
-pub trait Transformer {
-    fn fit(&mut self, x: ArrayView2<f64>) -> Result<(), AnvilError>;
+pub trait Transformer<I, O> {
+    fn fit(&mut self, x: I) -> Result<(), AnvilError>;
+    fn transform(&self, x: I) -> Result<O, AnvilError>;
 
-    fn transform(&self, x: ArrayView2<f64>) -> Result<Array2<f64>, AnvilError>;
-
-    fn fit_transform(&mut self, x: ArrayView2<f64>) -> Result<Array2<f64>, AnvilError> {
+    fn fit_transform(&mut self, x: I) -> Result<O, AnvilError>
+    where
+        I: Copy,
+    {
         self.fit(x)?;
         self.transform(x)
     }

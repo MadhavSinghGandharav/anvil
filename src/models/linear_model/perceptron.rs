@@ -6,7 +6,7 @@
 use crate::{
     optim::{Optimizer, SGD},
     preprocessing::encoder::LabelEncoder,
-    core::{Estimator, Classifier, AnvilError},
+    core::{Estimator, Classifier, AnvilError,Transformer},
 };
 use ndarray::{Array1, ArrayView1, ArrayView2, s};
 use rand::seq::SliceRandom;
@@ -103,24 +103,25 @@ impl Perceptron {
     /// # Errors
     ///
     /// Returns `AnvilError::InvalidParam` if more or fewer than 2 classes are detected.
-    fn update_target(&mut self, target: &[usize]) -> Result<Vec<f64>, AnvilError> {
+    fn update_target(&mut self, target: ArrayView1<usize>) -> Result<Vec<f64>, AnvilError> {
         let mut encoder = LabelEncoder::new();
-        let encoded = encoder.fit_transform(target);
+        let encoded = encoder.fit_transform(target)?;
 
-        if encoder.classes().len() != 2 {
+        let classes = encoder.classes()?;
+        if classes.len() != 2 {
             return Err(AnvilError::InvalidParam {
                 param: "y",
-                reason: "Perceptron supports only binary classification".into(),
+                reason: "LogisticRegression supports only binary classification".into(),
             });
         }
 
-        self.classes = [encoder.classes()[0], encoder.classes()[1]];
+        self.classes = [classes[0],classes[1]];
 
         Ok(
             encoded
-                .into_iter()
-                .map(|i| if i == 0 { -1.0 } else { 1.0 })
-                .collect()
+            .into_iter()
+            .map(|i| if i == 0 { -1.0 } else { 1.0 })
+            .collect()
         )
     }
 }
@@ -148,12 +149,7 @@ impl Estimator<usize> for Perceptron {
             });
         }
 
-        let y_slice = y.as_slice().ok_or(AnvilError::InvalidParam {
-            param: "y",
-            reason: "not contiguous".into(),
-        })?;
-
-        let target = self.update_target(y_slice)?;
+        let target = self.update_target(y)?;
 
         let mut params = Array1::<f64>::zeros(n_features + 1);
         let mut gradient = Array1::<f64>::zeros(n_features + 1);

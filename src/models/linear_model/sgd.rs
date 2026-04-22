@@ -1,3 +1,8 @@
+//! Stochastic Gradient Descent Regressor module.
+//!
+//! This module provides a linear regression implementation that optimizes 
+//! parameters using mini-batch Stochastic Gradient Descent.
+
 use ndarray::{Array1, ArrayView1, ArrayView2, s};
 use rand::seq::SliceRandom;
 
@@ -6,7 +11,23 @@ use crate::{
     core::{Estimator, Regressor, AnvilError},
 };
 
-/// Linear regression using mini-batch SGD
+/// A Linear Regression model trained using mini-batch Stochastic Gradient Descent (SGD).
+///
+/// This regressor is suitable for large-scale regression tasks where traditional 
+/// OLS (Ordinary Least Squares) might be computationally expensive.
+///
+/// # Examples
+///
+/// ```
+/// use anvil::models::SGDRegressor;
+/// use anvil::optim::SGD;
+///
+/// let model = SGDRegressor::builder()
+///     .epochs(200)
+///     .batch_size(16)
+///     .optimizer(SGD::new(0.05))
+///     .build();
+/// ```
 pub struct SGDRegressor {
     params: Option<Array1<f64>>,
     epochs: usize,
@@ -14,7 +35,7 @@ pub struct SGDRegressor {
     optimizer: Box<dyn Optimizer>,
 }
 
-/// Builder
+/// A builder pattern implementation for configuring an [`SGDRegressor`].
 pub struct Builder {
     epochs: usize,
     batch_size: usize,
@@ -32,22 +53,30 @@ impl Default for Builder {
 }
 
 impl Builder {
+    /// Sets the number of training epochs.
     pub fn epochs(mut self, epochs: usize) -> Self {
         self.epochs = epochs;
         self
     }
 
+    /// Sets the size of mini-batches used in the optimization step.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `batch_size` is 0.
     pub fn batch_size(mut self, batch_size: usize) -> Self {
         assert!(batch_size > 0, "batch_size must be greater than 0");
         self.batch_size = batch_size;
         self
     }
 
+    /// Sets the optimizer (e.g., SGD, Adam) for parameter updates.
     pub fn optimizer<O: Optimizer + 'static>(mut self, optimizer: O) -> Self {
         self.optimizer = Box::new(optimizer);
         self
     }
 
+    /// Consumes the builder and returns a configured [`SGDRegressor`].
     pub fn build(self) -> SGDRegressor {
         SGDRegressor {
             params: None,
@@ -59,32 +88,43 @@ impl Builder {
 }
 
 impl SGDRegressor {
+    /// Returns a new [`SGDRegressor`] with default settings.
     pub fn new() -> Self {
         Self::builder().build()
     }
 
+    /// Returns a [`Builder`] to configure the regressor.
     pub fn builder() -> Builder {
         Builder::default()
     }
 
+    /// Returns the learned weights (coefficients) of the model.
+    ///
     /// # Errors
-    /// - `NotFitted`
+    ///
+    /// Returns [`AnvilError::NotFitted`] if the model has not been trained.
     pub fn weights(&self) -> Result<ArrayView1<'_, f64>, AnvilError> {
         let params = self.params.as_ref().ok_or(AnvilError::NotFitted)?;
         Ok(params.slice(s![1..]))
     }
 
+    /// Returns the learned bias (intercept) of the model.
+    ///
     /// # Errors
-    /// - `NotFitted`
+    ///
+    /// Returns [`AnvilError::NotFitted`] if the model has not been trained.
     pub fn bias(&self) -> Result<f64, AnvilError> {
         Ok(self.params.as_ref().ok_or(AnvilError::NotFitted)?[0])
     }
 }
 
 impl Estimator<f64> for SGDRegressor {
+    /// Fits the model to the training data $(X, y)$.
+    ///
     /// # Errors
-    /// - `DimensionMismatch`
-    /// - `InvalidParam`
+    ///
+    /// * `AnvilError::DimensionMismatch`: If the number of samples in `x` and `y` do not match.
+    /// * `AnvilError::InvalidParam`: If internal parameters cannot be converted to slices.
     fn fit(
         &mut self,
         x: ArrayView2<f64>,
@@ -100,7 +140,6 @@ impl Estimator<f64> for SGDRegressor {
                 y_samples: y.len(),
             });
         }
-
 
         let mut params = Array1::zeros(n_features + 1);
         let mut gradient = Array1::<f64>::zeros(n_features + 1);
@@ -154,9 +193,12 @@ impl Estimator<f64> for SGDRegressor {
 }
 
 impl Regressor for SGDRegressor {
+    /// Predicts target values for the given input samples.
+    ///
     /// # Errors
-    /// - `NotFitted`
-    /// - `ShapeMismatch`
+    ///
+    /// * `AnvilError::NotFitted`: If called before `fit`.
+    /// * `AnvilError::ShapeMismatch`: If the feature count of `x` differs from the training data.
     fn predict(
         &self,
         x: ArrayView2<f64>,
