@@ -1,39 +1,24 @@
 use std::collections::HashMap;
-use ndarray::{Array1, ArrayView1, ArrayView2};
-use crate::neighbours::{NeighbourSearch, Weight};
-use crate::neighbours::metric::Euclidean;
-use crate::neighbours::brute_force::BruteForce;
 
-/// K-Nearest Neighbors classifier.
-///
-/// A generic, zero-cost implementation of KNN classification.
-///
-/// The type parameter `N` determines the neighbour search strategy
-/// used at compile time — no dynamic dispatch, no runtime branching.
-///
-/// # Notes
-///
-/// - Supports uniform and distance-based weighting
-/// - Pluggable search algorithms (`BruteForce`, `KDTree`, ...)
-/// - `BruteForce<Euclidean>` is the default configuration
+use ndarray::{Array1, ArrayView1, ArrayView2};
+
+use crate::{
+    core::{Estimator, Classifier, AnvilError},
+    neighbours::{NeighbourSearch, Weight},
+    neighbours::metric::Euclidean,
+    neighbours::brute_force::BruteForce,
+};
+
 pub struct KNNClassifier<N>
 where
     N: NeighbourSearch,
 {
-    /// Number of nearest neighbours considered
     k: usize,
-
-    /// Neighbour search strategy
     searcher: N,
-
-    /// Weighting strategy for vote aggregation
     weights: Weight,
-
-    /// Training class labels (set during `fit`)
     targets: Option<Vec<usize>>,
 }
 
-/// Builder for configuring [`KNNClassifier`]
 pub struct Builder<N>
 where
     N: NeighbourSearch,
@@ -44,12 +29,6 @@ where
 }
 
 impl Default for Builder<BruteForce<Euclidean>> {
-    /// Default configuration
-    ///
-    /// - k = 5
-    /// - algorithm = BruteForce
-    /// - metric = Euclidean
-    /// - weights = Uniform
     fn default() -> Self {
         Self {
             k: 5,
@@ -60,13 +39,10 @@ impl Default for Builder<BruteForce<Euclidean>> {
 }
 
 impl KNNClassifier<BruteForce<Euclidean>> {
-
-    /// Create model with default configuration
     pub fn new() -> Self {
         Builder::default().build()
     }
 
-    /// Returns builder
     pub fn builder() -> Builder<BruteForce<Euclidean>> {
         Builder::default()
     }
@@ -76,19 +52,16 @@ impl<N> Builder<N>
 where
     N: NeighbourSearch,
 {
-    /// Set number of neighbours
     pub fn k(mut self, k: usize) -> Self {
         self.k = k;
         self
     }
 
-    /// Set weighting strategy
     pub fn weights(mut self, weights: Weight) -> Self {
         self.weights = weights;
         self
     }
 
-    /// Set neighbour search algorithm
     pub fn algorithm<S: NeighbourSearch>(self, searcher: S) -> Builder<S> {
         Builder {
             k: self.k,
@@ -97,7 +70,6 @@ where
         }
     }
 
-    /// Build model
     pub fn build(self) -> KNNClassifier<N> {
         KNNClassifier {
             k: self.k,
@@ -108,69 +80,93 @@ where
     }
 }
 
-impl<N> KNNClassifier<N>
+impl<N> Estimator<usize> for KNNClassifier<N>
 where
     N: NeighbourSearch,
 {
-    /// Fits the classifier using training data
-    ///
-    /// # Panics
-    ///
-    /// Panics if:
-    ///
-    /// - features and targets size mismatch
-    pub fn fit(&mut self, features: ArrayView2<f64>, targets: ArrayView1<usize>) {
+    fn fit(
+        &mut self,
+        x: ArrayView2<f64>,
+        y: ArrayView1<usize>,
+    ) -> Result<(), AnvilError> {
 
-        assert_eq!(
-            features.nrows(),
-            targets.len(),
-            "Number of samples and target values must match"
-        );
+        let n_samples = x.nrows();
 
-        self.targets = Some(targets.to_vec());
-        self.searcher.build(features.to_owned());
+        if n_samples != y.len() {
+            return Err(AnvilError::DimensionMismatch {
+                x_samples: n_samples,
+                y_samples: y.len(),
+            });
+        }
+
+        if n_samples == 0 {
+            return Err(AnvilError::EmptyDataset { target: "X" });
+        }
+
+        if self.k == 0 {
+            return Err(AnvilError::InvalidParam {
+                param: "k",
+                reason: "k must be > 0".into(),
+            });
+        }
+
+        if self.k > n_samples {
+            return Err(AnvilError::InvalidParam {
+                param: "k",
+                reason: "k cannot be greater than number of samples".into(),
+            });
+        }
+
+        self.targets = Some(y.to_vec());
+        self.searcher.build(x.to_owned());
+
+        Ok(())
     }
+}
 
-    /// Predict target labels
-    ///
-    /// # Panics
-    ///
-    /// Panics if:
-    ///
-    /// - model not fitted
-    pub fn predict(&self, features: ArrayView2<f64>) -> Array1<usize> {
+impl<N> Classifier for KNNClassifier<N>
+where
+    N: NeighbourSearch,
+{
+    fn predict(
+        &self,
+        x: ArrayView2<f64>,
+    ) -> Result<Array1<usize>, AnvilError> {
 
-        let targets = self.targets.as_ref().expect("Model not fitted");
+        let targets = self.targets.as_ref().ok_or(AnvilError::NotFitted)?;
 
-        let mut predictions = Array1::zeros(features.nrows());
+        let mut predictions = Array1::zeros(x.nrows());
         let mut votes: HashMap<usize, f64> = HashMap::new();
 
-        for (i, row) in features.outer_iter().enumerate() {
+        for (i, row) in x.outer_iter().enumerate() {
 
-            // find k nearest neighbours
             let neighbours = self.searcher.query(row, self.k);
 
             votes.clear();
 
-            // accumulate weighted votes per class
             for (idx, dist) in neighbours {
 
                 let weight = match self.weights {
-                    Weight::Uniform  => 1.0,
-                    Weight::Distance => if dist == 0.0 { 1.0 } else { 1.0 / dist },
+                    Weight::Uniform => 1.0,
+                    Weight::Distance => {
+                        if dist == 0.0 { 1.0 } else { 1.0 / dist }
+                    }
                 };
 
                 *votes.entry(targets[idx]).or_insert(0.0) += weight;
             }
 
-            // pick class with highest total weight
-            predictions[i] = votes
+            let best = votes
                 .iter()
                 .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
-                .map(|(&label, _)| label)
-                .unwrap();
+                .ok_or(AnvilError::InvalidParam {
+                    param: "knn",
+                    reason: "no neighbours found".into(),
+                })?;
+
+            predictions[i] = *best.0;
         }
 
-        predictions
+        Ok(predictions)
     }
 }
