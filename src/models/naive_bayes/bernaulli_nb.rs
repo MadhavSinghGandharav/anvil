@@ -1,3 +1,9 @@
+//! Bernoulli Naive Bayes module.
+//!
+//! This module implements the Bernoulli Naive Bayes algorithm, which is suitable for 
+//! discrete data. Unlike Multinomial NB, which uses word counts, Bernoulli NB 
+//! is designed for binary/boolean features.
+
 use crate::{
     preprocessing::encoder::LabelEncoder,
     core::{Estimator, Classifier, AnvilError,Transformer},
@@ -5,6 +11,21 @@ use crate::{
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
+/// Bernoulli Naive Bayes classifier.
+///
+/// This classifier is suitable for discrete data where features are independent 
+/// boolean variables. It binarizes input features based on a specified `threshold`.
+///
+/// # Examples
+///
+/// ```
+/// use anvil::models::BernoulliNB;
+///
+/// let model = BernoulliNB::builder()
+///     .threshold(0.5)
+///     .build()
+///     .unwrap();
+/// ```
 pub struct BernoulliNB {
     log_prob: Option<Array2<f64>>,
     log_prob_neg: Option<Array2<f64>>,
@@ -14,6 +35,7 @@ pub struct BernoulliNB {
     threshold: f64,
 }
 
+/// A builder for configuring and creating a [`BernoulliNB`] instance.
 pub struct Builder {
     threshold: f64,
     class_prob: Option<Vec<f64>>,
@@ -29,20 +51,28 @@ impl Default for Builder {
 }
 
 impl Builder {
-
+    /// Sets user-defined prior probabilities for the classes.
+    ///
+    /// If not provided, priors are calculated from the class frequencies in the training set.
     pub fn probability(mut self, class_prob: Vec<f64>) -> Self {
         self.class_prob = Some(class_prob);
         self
     }
 
+    /// Sets the threshold for binarizing (mapping to boolean) the input features.
     pub fn threshold(mut self, threshold: f64) -> Self {
         self.threshold = threshold;
         self
     }
 
+    /// Consumes the builder and returns a [`BernoulliNB`] instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnvilError::InvalidParam`] if the threshold is not finite or if 
+    /// `class_prob` is invalid.
     pub fn build(self) -> Result<BernoulliNB, AnvilError> {
 
-        // threshold check
         if !self.threshold.is_finite() {
             return Err(AnvilError::InvalidParam {
                 param: "threshold",
@@ -50,9 +80,7 @@ impl Builder {
             });
         }
 
-        // class_prob validation (single pass)
         if let Some(ref probs) = self.class_prob {
-
             if probs.is_empty() {
                 return Err(AnvilError::InvalidParam {
                     param: "class_prob",
@@ -61,7 +89,6 @@ impl Builder {
             }
 
             let mut sum = 0.0;
-
             for &p in probs {
                 if !(p >= 0.0 && p.is_finite()) {
                     return Err(AnvilError::InvalidParam {
@@ -69,7 +96,6 @@ impl Builder {
                         reason: "must contain finite, non-negative values".into(),
                     });
                 }
-
                 sum += p;
             }
 
@@ -93,20 +119,32 @@ impl Builder {
 }
 
 impl BernoulliNB {
+    /// Returns a new [`BernoulliNB`] with default parameters (threshold = 0.0).
     pub fn new() -> Result<Self, AnvilError> {
         Builder::default().build()
     }
 
+    /// Returns a [`Builder`] to configure the model.
     pub fn builder() -> Builder {
         Builder::default()
     }
 
+    /// Returns the class labels learned during training.
     pub fn classes(&self) -> &Vec<usize> {
         &self.classes
     }
 }
 
 impl Estimator<usize> for BernoulliNB {
+    /// Fits the Bernoulli Naive Bayes model to the training data $(X, y)$.
+    ///
+    /// Input features are binarized: values greater than `threshold` are treated as 1,
+    /// and others as 0. Laplace smoothing (additive smoothing) is applied.
+    ///
+    /// # Errors
+    ///
+    /// * `AnvilError::DimensionMismatch`: If `x` and `y` have different sample counts.
+    /// * `AnvilError::EmptyDataset`: If the input `x` contains no samples.
     fn fit(
         &mut self,
         x: ArrayView2<f64>,
@@ -127,7 +165,6 @@ impl Estimator<usize> for BernoulliNB {
             return Err(AnvilError::EmptyDataset { target: "X" });
         }
 
-        // Encode labels
         let mut encoder = LabelEncoder::new();
         let target = encoder.fit_transform(y)?;
 
@@ -143,10 +180,10 @@ impl Estimator<usize> for BernoulliNB {
             }
         }
 
-        // Count
         let mut count = Array2::<f64>::zeros((n_classes, n_features));
         let mut class_count = vec![0usize; n_classes];
 
+        // Perform binarization and count occurrences per class
         for (i, row) in x.outer_iter().enumerate() {
             let c = target[i];
             class_count[c] += 1;
@@ -160,10 +197,10 @@ impl Estimator<usize> for BernoulliNB {
                 });
         }
 
-        // Compute log probs
         let mut log_prob = Array2::<f64>::zeros((n_classes, n_features));
         let mut log_prob_neg = Array2::<f64>::zeros((n_classes, n_features));
 
+        // Compute log-probabilities with Laplace smoothing
         for c in 0..n_classes {
             let n = class_count[c] as f64 + 2.0;
 
@@ -177,9 +214,7 @@ impl Estimator<usize> for BernoulliNB {
                 });
         }
 
-        // Priors
         let total = n_samples as f64;
-
         let log_priors = if let Some(ref p) = self.class_prob {
             p.iter().map(|p| p.ln()).collect()
         } else {
@@ -198,6 +233,12 @@ impl Estimator<usize> for BernoulliNB {
 }
 
 impl Classifier for BernoulliNB {
+    /// Predicts class labels for the provided test samples.
+    ///
+    /// # Errors
+    ///
+    /// * `AnvilError::NotFitted`: If the model has not been trained yet.
+    /// * `AnvilError::ShapeMismatch`: If the feature count of `x` differs from the training data.
     fn predict(
         &self,
         x: ArrayView2<f64>,

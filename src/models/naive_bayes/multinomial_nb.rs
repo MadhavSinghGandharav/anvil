@@ -1,3 +1,9 @@
+//! Multinomial Naive Bayes module.
+//!
+//! This module implements the Multinomial Naive Bayes algorithm, which is widely used 
+//! for document classification (e.g., spam filtering) where features represent 
+//! word counts or frequencies.
+
 use crate::{
     preprocessing::encoder::LabelEncoder,
     core::{Estimator, Classifier, AnvilError, Transformer},
@@ -5,6 +11,21 @@ use crate::{
 
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 
+/// Multinomial Naive Bayes (MultinomialNB) classifier.
+///
+/// This model is intended for use with discrete data (e.g., word counts for text). 
+/// It requires non-negative feature values and uses additive (Laplace) smoothing 
+/// to handle features not present in the training set.
+///
+/// # Examples
+///
+/// ```
+/// use anvil::models::MultinomialNB;
+///
+/// let model = MultinomialNB::builder()
+///     .build()
+///     .unwrap();
+/// ```
 pub struct MultinomialNB {
     log_prob: Option<Array2<f64>>,
     class_log_prior: Option<Vec<f64>>,
@@ -12,6 +33,7 @@ pub struct MultinomialNB {
     classes: Vec<usize>,
 }
 
+/// A builder for configuring and creating a [`MultinomialNB`] instance.
 pub struct Builder {
     class_prob: Option<Vec<f64>>,
 }
@@ -23,12 +45,20 @@ impl Default for Builder {
 }
 
 impl Builder {
-
+    /// Sets user-defined prior probabilities for the classes.
+    ///
+    /// If provided, these values must be non-negative and sum to a positive value.
     pub fn probability(mut self, class_prob: Vec<f64>) -> Self {
         self.class_prob = Some(class_prob);
         self
     }
 
+    /// Consumes the builder and returns a [`MultinomialNB`] instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnvilError::InvalidParam`] if `class_prob` is empty, contains 
+    /// negative values, or sums to zero.
     pub fn build(self) -> Result<MultinomialNB, AnvilError> {
 
         if let Some(ref probs) = self.class_prob {
@@ -68,21 +98,33 @@ impl Builder {
         })
     }
 }
+
 impl MultinomialNB {
+    /// Returns a new instance of [`MultinomialNB`] with default settings.
     pub fn new() -> Result<Self, AnvilError> {
         Builder::default().build()
     }
 
+    /// Returns a [`Builder`] to configure the model.
     pub fn builder() -> Builder {
         Builder::default()
     }
 
+    /// Returns the unique class labels found during fitting.
     pub fn classes(&self) -> &Vec<usize> {
         &self.classes
     }
 }
 
 impl Estimator<usize> for MultinomialNB {
+    /// Fits the Multinomial Naive Bayes model to the training data $(X, y)$.
+    ///
+    /// # Errors
+    ///
+    /// * `AnvilError::DimensionMismatch`: If `x` and `y` have different sample counts.
+    /// * `AnvilError::EmptyDataset`: If the input `x` contains no samples.
+    /// * `AnvilError::InvalidParam`: If `x` contains negative values or if provided 
+    ///   priors do not match the number of classes.
     fn fit(
         &mut self,
         x: ArrayView2<f64>,
@@ -176,6 +218,13 @@ impl Estimator<usize> for MultinomialNB {
 }
 
 impl Classifier for MultinomialNB {
+    /// Predicts class labels for a set of test samples.
+    ///
+    /// # Errors
+    ///
+    /// * `AnvilError::NotFitted`: If the model has not been trained.
+    /// * `AnvilError::ShapeMismatch`: If the number of features in `x` differs 
+    ///   from the training data.
     fn predict(
         &self,
         x: ArrayView2<f64>,

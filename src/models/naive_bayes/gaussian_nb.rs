@@ -1,3 +1,9 @@
+//! Gaussian Naive Bayes module.
+//!
+//! This module implements the Gaussian Naive Bayes algorithm for classification.
+//! It assumes that the continuous values associated with each class are distributed 
+//! according to a Gaussian (Normal) distribution.
+
 use crate::{
     preprocessing::encoder::LabelEncoder,
     core::{Estimator, Classifier, AnvilError,Transformer},
@@ -6,7 +12,21 @@ use crate::{
 use ndarray::{Array1, Array2, ArrayView1, ArrayView2, Zip};
 use std::f64::consts::PI;
 
-/// Gaussian Naive Bayes
+/// Gaussian Naive Bayes (GaussianNB) classifier.
+///
+/// This model calculates the likelihood of the features based on a Gaussian 
+/// distribution defined by the mean and variance of each feature per class.
+///
+/// # Examples
+///
+/// ```
+/// use anvil::models::GaussianNB;
+///
+/// let model = GaussianNB::builder()
+///     .var_smoothing(1e-10)
+///     .build()
+///     .unwrap();
+/// ```
 pub struct GaussianNB {
     mean: Option<Array2<f64>>,
     log_gauss_const: Option<Array2<f64>>,
@@ -17,7 +37,7 @@ pub struct GaussianNB {
     var_smoothing: f64,
 }
 
-/// Builder
+/// A builder for configuring and creating a [`GaussianNB`] instance.
 pub struct Builder {
     class_prob: Option<Vec<f64>>,
     var_smoothing: f64,
@@ -33,16 +53,27 @@ impl Default for Builder {
 }
 
 impl Builder {
+    /// Sets user-defined prior probabilities for the classes.
+    ///
+    /// If not provided, priors are adjusted according to the data.
     pub fn probability(mut self, class_prob: Vec<f64>) -> Self {
         self.class_prob = Some(class_prob);
         self
     }
 
+    /// Sets the portion of the largest variance of all features that is added 
+    /// to variances for calculation stability.
     pub fn var_smoothing(mut self, value: f64) -> Self {
         self.var_smoothing = value;
         self
     }
 
+    /// Consumes the builder and returns a [`GaussianNB`] instance.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AnvilError::InvalidParam` if `var_smoothing` is non-positive or 
+    /// if `class_prob` sums to zero or contains invalid values.
     pub fn build(self) -> Result<GaussianNB, AnvilError> {
 
         if self.var_smoothing <= 0.0 {
@@ -64,14 +95,12 @@ impl Builder {
             let mut sum = 0.0;
 
             for &p in probs {
-                // check finite + non-negative
                 if !p.is_finite() || p < 0.0 {
                     return Err(AnvilError::InvalidParam {
                         param: "class_prob",
                         reason: "must contain finite, non-negative values".into(),
                     });
                 }
-
                 sum += p;
             }
 
@@ -96,24 +125,30 @@ impl Builder {
 }
 
 impl GaussianNB {
+    /// Returns a new [`GaussianNB`] with default parameters.
     pub fn new() -> Result<Self, AnvilError> {
         Builder::default().build()
     }
 
+    /// Returns a [`Builder`] to configure the model.
     pub fn builder() -> Builder {
         Builder::default()
     }
 
+    /// Returns the unique class labels found during training.
     pub fn classes(&self) -> &Vec<usize> {
         &self.classes
     }
 }
 
 impl Estimator<usize> for GaussianNB {
+    /// Fits the Gaussian Naive Bayes model according to the given training data.
+    ///
     /// # Errors
-    /// - DimensionMismatch
-    /// - EmptyDataset
-    /// - InvalidParam
+    ///
+    /// * `AnvilError::DimensionMismatch`: If `x` and `y` have different sample counts.
+    /// * `AnvilError::EmptyDataset`: If the input `x` contains no samples.
+    /// * `AnvilError::InvalidParam`: If the number of provided priors does not match the class count.
     fn fit(
         &mut self,
         x: ArrayView2<f64>,
@@ -136,8 +171,6 @@ impl Estimator<usize> for GaussianNB {
             });
         }
 
-        
-
         let mut encoder = LabelEncoder::new();
         let target = encoder.fit_transform(y)?;
 
@@ -157,9 +190,8 @@ impl Estimator<usize> for GaussianNB {
         let mut sum_sq = Array2::<f64>::zeros((n_classes, n_features));
         let mut count  = vec![0usize; n_classes];
 
-        // accumulate
+        // Accumulate sums and squared sums for mean and variance calculation
         for (i, &c) in target.iter().enumerate() {
-
             count[c] += 1;
             let row = x.row(i);
 
@@ -172,11 +204,10 @@ impl Estimator<usize> for GaussianNB {
                 });
         }
 
-        // compute mean + variance
         let mut max_var = 0.0;
 
+        // Compute mean and variance per feature per class
         for c in 0..n_classes {
-
             let n = count[c] as f64;
 
             Zip::from(sum.row_mut(c))
@@ -194,6 +225,7 @@ impl Estimator<usize> for GaussianNB {
                 });
         }
 
+        // Apply variance smoothing
         let eps = (self.var_smoothing * max_var).max(self.var_smoothing);
 
         let mut log_const = Array2::<f64>::zeros((n_classes, n_features));
@@ -226,9 +258,12 @@ impl Estimator<usize> for GaussianNB {
 }
 
 impl Classifier for GaussianNB {
+    /// Performs classification on an array of test vectors `x`.
+    ///
     /// # Errors
-    /// - NotFitted
-    /// - ShapeMismatch
+    ///
+    /// * `AnvilError::NotFitted`: If the model has not been trained yet.
+    /// * `AnvilError::ShapeMismatch`: If the feature count of `x` does not match the fitted data.
     fn predict(
         &self,
         x: ArrayView2<f64>,
@@ -256,7 +291,7 @@ impl Classifier for GaussianNB {
             let mut best_score = f64::NEG_INFINITY;
 
             for c in 0..n_classes {
-
+                // Log-posterior ∝ log(prior) + Σ log(likelihood)
                 let mut score = log_prior[c];
 
                 Zip::from(&row)
