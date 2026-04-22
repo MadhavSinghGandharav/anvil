@@ -1,3 +1,8 @@
+//! K-Nearest Neighbours (KNN) Classification module.
+//!
+//! This module provides a KNN classifier that supports various search algorithms 
+//! (like Brute Force) and weighting schemes (Uniform or Distance-based).
+
 use std::collections::HashMap;
 
 use ndarray::{Array1, ArrayView1, ArrayView2};
@@ -9,6 +14,24 @@ use crate::{
     neighbours::brute_force::BruteForce,
 };
 
+/// K-Nearest Neighbours classifier.
+/// 
+/// The classifier stores training samples and predicts the class of a new sample 
+/// by taking a majority vote of its `k` nearest neighbours.
+///
+/// # Examples
+///
+/// ```
+/// use anvil::models::KNNClassifier;
+/// use anvil::neighbours::Weight;
+///
+/// // Create a KNN classifier with k=3 and distance-based weighting
+/// let model = KNNClassifier::builder()
+///     .k(3)
+///     .weights(Weight::Distance)
+///     .build()
+///     .unwrap();
+/// ```
 pub struct KNNClassifier<N>
 where
     N: NeighbourSearch,
@@ -19,6 +42,7 @@ where
     targets: Option<Vec<usize>>,
 }
 
+/// A builder for configuring and creating a [`KNNClassifier`].
 pub struct Builder<N>
 where
     N: NeighbourSearch,
@@ -38,21 +62,23 @@ impl Default for Builder<BruteForce<Euclidean>> {
     }
 }
 
-
 impl<N> Builder<N>
 where
     N: NeighbourSearch,
 {
+    /// Sets the number of neighbours to use for queries.
     pub fn k(mut self, k: usize) -> Self {
         self.k = k;
         self
     }
 
+    /// Sets the weighting function used in prediction (Uniform or Distance).
     pub fn weights(mut self, weights: Weight) -> Self {
         self.weights = weights;
         self
     }
 
+    /// Sets the underlying search algorithm (e.g., BruteForce, BallTree).
     pub fn algorithm<S: NeighbourSearch>(self, searcher: S) -> Builder<S> {
         Builder {
             k: self.k,
@@ -61,7 +87,12 @@ where
         }
     }
 
-    pub fn build(self) -> Result<KNNClassifier<N>,AnvilError> {
+    /// Consumes the builder and returns a [`KNNClassifier`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnvilError::InvalidParam`] if `k` is 0.
+    pub fn build(self) -> Result<KNNClassifier<N>, AnvilError> {
 
         if self.k == 0 {
             return Err(AnvilError::InvalidParam {
@@ -79,12 +110,13 @@ where
     }
 }
 
-
 impl KNNClassifier<BruteForce<Euclidean>> {
-    pub fn new() -> Result<Self,AnvilError> {
+    /// Returns a new instance of [`KNNClassifier`] with default settings.
+    pub fn new() -> Result<Self, AnvilError> {
         Builder::default().build()
     }
 
+    /// Returns a [`Builder`] with default BruteForce and Euclidean settings.
     pub fn builder() -> Builder<BruteForce<Euclidean>> {
         Builder::default()
     }
@@ -94,6 +126,13 @@ impl<N> Estimator<usize> for KNNClassifier<N>
 where
     N: NeighbourSearch,
 {
+    /// Fits the KNN model by building the search index with training data.
+    ///
+    /// # Errors
+    ///
+    /// * `AnvilError::DimensionMismatch`: If `x` and `y` sample counts do not match.
+    /// * `AnvilError::EmptyDataset`: If `x` is empty.
+    /// * `AnvilError::InvalidParam`: If `k` is 0 or greater than the number of samples.
     fn fit(
         &mut self,
         x: ArrayView2<f64>,
@@ -138,6 +177,12 @@ impl<N> Classifier for KNNClassifier<N>
 where
     N: NeighbourSearch,
 {
+    /// Predicts class labels for the provided test samples using majority vote.
+    ///
+    /// # Errors
+    ///
+    /// * `AnvilError::NotFitted`: If the model has not been fitted.
+    /// * `AnvilError::InvalidParam`: If no neighbours are returned during query.
     fn predict(
         &self,
         x: ArrayView2<f64>,
