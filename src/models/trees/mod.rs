@@ -6,11 +6,12 @@ mod tree_reg;
 mod decision_tree_clf;
 mod decision_tree_reg;
 mod extra_tree_clf;
+mod extra_tree_reg;
 
 pub use decision_tree_clf::DecisionTreeClassifier;
 pub use decision_tree_reg::DecisionTreeRegressor;
 pub use extra_tree_clf::ExtraTreeClassifier;
-
+pub use extra_tree_reg::ExtraTreeRegressor;
 
 pub enum Criterion{
     Entropy,
