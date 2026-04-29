@@ -5,9 +5,13 @@ mod tree_clf;
 mod tree_reg;
 mod decision_tree_clf;
 mod decision_tree_reg;
+mod extra_tree_clf;
 
 pub use decision_tree_clf::DecisionTreeClassifier;
 pub use decision_tree_reg::DecisionTreeRegressor;
+pub use extra_tree_clf::ExtraTreeClassifier;
+
+
 pub enum Criterion{
     Entropy,
     Gini

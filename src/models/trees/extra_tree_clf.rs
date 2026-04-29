@@ -1,9 +1,9 @@
-use std::cmp::Ordering;
-use rand::Rng;
+
+use rand::{Rng,RngExt, seq::SliceRandom};
 use ndarray::{ArrayView1, ArrayView2, Array1};
 
 use crate::{
-    core::{Estimator, AnvilError, Transformer, Classifier},
+    core::{Estimator, AnvilError, Classifier, Transformer},
     models::trees::*,
     models::trees::tree_clf::*,
     preprocessing::encoder::LabelEncoder,
@@ -12,7 +12,7 @@ use crate::{
 /// =======================
 /// MODEL
 /// =======================
-pub struct DecisionTreeClassifier {
+pub struct ExtraTreeClassifier {
     criterion: Criterion,
     min_samples_split: usize,
     min_samples_leaf: usize,
@@ -20,8 +20,6 @@ pub struct DecisionTreeClassifier {
     max_features: Option<usize>,
     root: Option<Box<Node<usize>>>,
     classes: Vec<usize>,
-
-    sorted_idx: Vec<Vec<usize>>,
 }
 
 /// =======================
@@ -48,8 +46,8 @@ impl Default for Builder {
 }
 
 impl Builder {
-    pub fn criterion(mut self, criterion: Criterion) -> Self {
-        self.criterion = criterion;
+    pub fn criterion(mut self, c: Criterion) -> Self {
+        self.criterion = c;
         self
     }
 
@@ -73,7 +71,7 @@ impl Builder {
         self
     }
 
-    pub fn build(self) -> Result<DecisionTreeClassifier, AnvilError> {
+    pub fn build(self) -> Result<ExtraTreeClassifier, AnvilError> {
         if self.min_samples_split < 2 {
             return Err(AnvilError::InvalidParam {
                 param: "min_samples_split",
@@ -88,16 +86,7 @@ impl Builder {
             });
         }
 
-        if let Some(m) = self.max_features {
-            if m < 1 {
-                return Err(AnvilError::InvalidParam {
-                    param: "max_features",
-                    reason: "must be >= 1".into(),
-                });
-            }
-        }
-
-        Ok(DecisionTreeClassifier {
+        Ok(ExtraTreeClassifier {
             criterion: self.criterion,
             min_samples_split: self.min_samples_split,
             min_samples_leaf: self.min_samples_leaf,
@@ -105,35 +94,28 @@ impl Builder {
             max_features: self.max_features,
             root: None,
             classes: Vec::new(),
-            sorted_idx: Vec::new(),
         })
     }
 }
 
-impl DecisionTreeClassifier {
-    /// Create model with default configuration
-    ///
-    /// # Errors
-    ///
+impl ExtraTreeClassifier {
     pub fn new() -> Result<Self, AnvilError> {
         Builder::default().build()
     }
 
-    /// Returns builder
     pub fn builder() -> Builder {
         Builder::default()
     }
 
-    /// Returns the original class labels
     pub fn classes(&self) -> &[usize] {
         &self.classes
     }
 }
 
 /// =======================
-/// ESTIMATOR IMPL
+/// FIT
 /// =======================
-impl Estimator<usize> for DecisionTreeClassifier {
+impl Estimator<usize> for ExtraTreeClassifier {
     fn fit(&mut self, x: ArrayView2<f64>, y: ArrayView1<usize>) -> Result<(), AnvilError> {
 
         let n_samples = x.nrows();
@@ -148,49 +130,24 @@ impl Estimator<usize> for DecisionTreeClassifier {
             });
         }
 
-        if n_samples == 0 {
-            return Err(AnvilError::InvalidParam {
-                param: "features",
-                reason: "cannot fit with zero samples".into(),
-            });
-        }
-
         if max_features > n_features {
             return Err(AnvilError::InvalidParam {
                 param: "max_features",
-                reason: "cannot be greater than total features".into(),
+                reason: "cannot exceed feature count".into(),
             });
         }
 
-        // -------- Encode labels --------
+        // label encoding
         let mut encoder = LabelEncoder::new();
         let encoded = encoder.fit_transform(y)?;
-
         let n_classes = encoder.classes()?.len();
         self.classes = encoder.classes()?.to_vec();
 
-        // -------- Sorted indices --------
-        let sorted_idx: Vec<Vec<usize>> = (0..n_features)
-            .map(|f| {
-                let mut col: Vec<usize> = (0..n_samples).collect();
-                col.sort_unstable_by(|&a, &b| {
-                    x[[a, f]]
-                        .partial_cmp(&x[[b, f]])
-                        .unwrap_or(Ordering::Equal)
-                });
-                col
-            })
-            .collect();
-
-        self.sorted_idx = sorted_idx;
-
-        // -------- Criterion --------
         let impurity_fn: fn(&[usize], usize) -> f64 = match self.criterion {
             Criterion::Entropy => entropy,
             Criterion::Gini => gini,
         };
 
-        // -------- Root context --------
         let indices: Vec<usize> = (0..n_samples).collect();
 
         let ctx = SplitContext {
@@ -200,10 +157,8 @@ impl Estimator<usize> for DecisionTreeClassifier {
             depth: 0,
         };
 
-        // -------- RNG --------
         let mut rng = rand::rng();
 
-        // -------- Build tree --------
         let root = build_tree_clf(
             self,
             impurity_fn,
@@ -221,10 +176,10 @@ impl Estimator<usize> for DecisionTreeClassifier {
     }
 }
 
-
-use rand::seq::SliceRandom;
-
-impl ClfSplitter for DecisionTreeClassifier {
+/// =======================
+/// SPLITTER
+/// =======================
+impl ClfSplitter for ExtraTreeClassifier {
     fn best_split(
         &self,
         ctx: &SplitContext<usize>,
@@ -233,27 +188,18 @@ impl ClfSplitter for DecisionTreeClassifier {
         rng: &mut impl Rng,
     ) -> Option<SplitResult> {
 
-        let n_samples_total = ctx.x.nrows();
-        let n_node_samples = ctx.indices.len();
+        let n_node = ctx.indices.len();
 
-        // ---------- mask ----------
-        let mut in_node = vec![false; n_samples_total];
-        for &i in ctx.indices {
-            in_node[i] = true;
-        }
-
-        // ---------- parent counts ----------
         let mut parent_counts = vec![0usize; n_classes];
         for &i in ctx.indices {
             parent_counts[ctx.y[i]] += 1;
         }
 
-        let mut best_feature = 0usize;
+        let mut best_feature = 0;
         let mut best_threshold = 0.0;
-        let mut best_pos = 0usize;
+        let mut best_pos = 0;
         let mut best_impurity = f64::INFINITY;
 
-        // ---------- feature selection ----------
         let mut features: Vec<usize> = (0..ctx.x.ncols()).collect();
 
         if let Some(max_f) = self.max_features {
@@ -261,68 +207,57 @@ impl ClfSplitter for DecisionTreeClassifier {
             features.truncate(max_f);
         }
 
-        // ---------- reusable buffers ----------
         let mut left_counts = vec![0usize; n_classes];
-        let mut right_counts_local = vec![0usize; n_classes];
+        let mut right_counts = vec![0usize; n_classes];
 
-        // ---------- iterate features ----------
+        const EPS: f64 = 1e-12;
+
         for &feature in &features {
 
-            // reset buffers
+            // -------- 2-sample midpoint threshold --------
+            let i1 = ctx.indices[rng.random_range(0..n_node)];
+            let i2 = ctx.indices[rng.random_range(0..n_node)];
+
+            let v1 = ctx.x[[i1, feature]];
+            let v2 = ctx.x[[i2, feature]];
+
+            if (v1 - v2).abs() < EPS {
+                continue;
+            }
+
+            let thr = (v1 + v2) * 0.5;
+
             left_counts.fill(0);
-            right_counts_local.clone_from(&parent_counts);
+            right_counts.copy_from_slice(&parent_counts);
 
-            let mut left_n = 0usize;
-            let mut right_n = n_node_samples;
+            let mut left_n = 0;
 
-            let mut prev_value = None;
-            let sorted = &self.sorted_idx[feature];
-
-            for &idx in sorted {
-
-                if !in_node[idx] {
-                    continue;
+            for &idx in ctx.indices {
+                if ctx.x[[idx, feature]] <= thr {
+                    let c = ctx.y[idx];
+                    left_counts[c] += 1;
+                    right_counts[c] -= 1;
+                    left_n += 1;
                 }
+            }
 
-                let y_val = ctx.y[idx];
+            let right_n = n_node - left_n;
 
-                // move right -> left
-                left_counts[y_val] += 1;
-                right_counts_local[y_val] -= 1;
+            if left_n < self.min_samples_leaf || right_n < self.min_samples_leaf {
+                continue;
+            }
 
-                left_n += 1;
-                right_n -= 1;
+            let left_imp = criterion(&left_counts, left_n);
+            let right_imp = criterion(&right_counts, right_n);
 
-                let val = ctx.x[[idx, feature]];
+            let score = left_n as f64 * left_imp
+                + right_n as f64 * right_imp;
 
-                // skip identical values
-                if let Some(prev) = prev_value {
-                    if val == prev {
-                        continue;
-                    }
-                }
-
-                prev_value = Some(val);
-
-                // leaf constraint
-                if left_n < self.min_samples_leaf || right_n < self.min_samples_leaf {
-                    continue;
-                }
-
-                // impurity
-                let left_imp = criterion(&left_counts, left_n);
-                let right_imp = criterion(&right_counts_local, right_n);
-
-                let weighted = left_n as f64 * left_imp
-                    + right_n as f64 * right_imp;
-                
-
-                if weighted < best_impurity {
-                    best_impurity = weighted;
-                    best_feature = feature;
-                    best_threshold = val;
-                    best_pos = left_n;
-                }
+            if score < best_impurity {
+                best_impurity = score;
+                best_feature = feature;
+                best_threshold = thr;
+                best_pos = left_n;
             }
         }
 
@@ -338,17 +273,20 @@ impl ClfSplitter for DecisionTreeClassifier {
     }
 }
 
- impl Classifier for DecisionTreeClassifier{
-     fn predict(&self, x: ArrayView2<f64>) -> Result<ndarray::Array1<usize>, AnvilError> {
-          let root = self.root.as_ref().ok_or(AnvilError::NotFitted)?;
+/// =======================
+/// PREDICT
+/// =======================
+impl Classifier for ExtraTreeClassifier {
+    fn predict(&self, x: ArrayView2<f64>) -> Result<Array1<usize>, AnvilError> {
 
+        let root = self.root.as_ref().ok_or(AnvilError::NotFitted)?;
         let mut preds = Array1::zeros(x.nrows());
 
         for (i, row) in x.outer_iter().enumerate() {
-            let encoded = traverse(root, row);
-            preds[i] = self.classes[encoded];
+            let enc = traverse(root, row);
+            preds[i] = self.classes[enc];
         }
 
         Ok(preds)
-    } 
- }
+    }
+}
