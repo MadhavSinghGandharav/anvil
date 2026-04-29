@@ -14,7 +14,6 @@ pub struct DecisionTreeRegressor {
     max_depth: Option<usize>,
     max_features: Option<usize>,
     root: Option<Box<Node<f64>>>,
-    classes: Vec<usize>,
     sorted_idx: Vec<Vec<usize>>,
 }
 
@@ -44,9 +43,18 @@ impl Builder {
             max_depth: self.max_depth,
             max_features: self.max_features,
             root: None,
-            classes: Vec::new(),
             sorted_idx: Vec::new(),
         })
+    }
+}
+
+impl DecisionTreeRegressor {
+    pub fn new() -> Result<Self, AnvilError> {
+        Builder::default().build()
+    }
+
+    pub fn builder() -> Builder {
+        Builder::default()
     }
 }
 
