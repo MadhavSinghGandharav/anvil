@@ -66,6 +66,10 @@ let mut model = KNNClassifier::builder()
 
 ---
 
+## Contributors: 
+[Akhil] (https://github.com/Akhilx12)
+[Madhav] (https://github.com/MadhavSinghGandharav)
+
 
 
 ## License
