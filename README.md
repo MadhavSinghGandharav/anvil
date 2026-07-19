@@ -66,9 +66,10 @@ let mut model = KNNClassifier::builder()
 
 ---
 
-## Contributors: 
-[Akhil] (https://github.com/Akhilx12)
-[Madhav] (https://github.com/MadhavSinghGandharav)
+## Contributors
+<a href="https://github.com/Akhilx12/anvil/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=Akhilx12/anvil" />
+</a>
 
 
 
